@@ -133,6 +133,8 @@
   .start-sub { font-size: 13px; color: var(--ink-dim); margin: 0 0 14px; }
   .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
   .field label { font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-dim); }
+  .field-row { display: flex; gap: 8px; margin-bottom: 12px; }
+  .field-row input { flex: 1; min-width: 0; }
   input[type="text"], input[type="number"], input[type="email"], input[type="password"], textarea {
     font-family: inherit; font-size: 16px; padding: 11px 12px;
     border-radius: 9px; border: 1px solid var(--border); background: var(--surface); color: var(--ink);
@@ -161,7 +163,7 @@
   .form-error { color: var(--danger); font-size: 13px; margin: -4px 0 10px; }
 
   .session-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-  .session-bar-left { display: flex; flex-direction: column; }
+  .session-bar-left { display: flex; flex-direction: column; gap: 2px; }
   .session-bar-title { font-family: "Big Shoulders Display", sans-serif; font-weight: 800; font-size: 20px; }
   .session-bar-meta { font-size: 12px; color: var(--ink-dim); font-family: "IBM Plex Mono", monospace; }
 
@@ -180,6 +182,7 @@
     flex: 1; padding: 12px 6px; border-radius: 10px; border: 1px solid var(--border);
     background: var(--surface); color: var(--ink); font-weight: 600; font-size: 14px;
   }
+  .segmented button.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
   .segmented button.active.flash { background: var(--flash-bg); border-color: var(--flash); color: var(--flash); }
   .segmented button.active.send { background: var(--send-bg); border-color: var(--send); color: var(--send); }
   .segmented button.active.attempt { background: var(--attempt-bg); border-color: var(--ink-faint); color: var(--ink); }
@@ -251,7 +254,7 @@
     <div class="brand-row">
       <div>
         <h1>Send Log</h1>
-        <p class="tagline">quick climb capture &middot; synced to your account</p>
+        <p class="tagline">quick climb &amp; strength capture &middot; synced to your account</p>
       </div>
       <div class="status-dot" id="status-dot"><span class="dot"></span><span id="status-text">ready</span></div>
     </div>
@@ -272,18 +275,39 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const TAG_PRESETS = ["crimps","slopers","pinches","pockets","dynos","overhangs","slab","footwork","mantles","compression","coordination","heel_hook","toe_hook"];
 const GRADES = Array.from({length: 18}, (_, i) => "V" + i);
 
+const EXERCISE_CATEGORIES = ["finger_strength", "pulling", "pushing", "core", "mobility", "other"];
+const CATEGORY_LABELS = {
+  finger_strength: "Finger Strength", pulling: "Pulling", pushing: "Pushing",
+  core: "Core", mobility: "Mobility", other: "Other",
+};
+const COMMON_EXERCISE_NAMES = [
+  "Fingerboard max hangs", "Fingerboard repeaters", "Campus board ladders", "Pinch block hangs",
+  "Pull-ups", "Weighted pull-ups", "Lock-off holds", "Rows (TRX / rings)",
+  "Push-ups", "Dips", "Overhead press",
+  "Hanging leg raises", "Plank", "Front lever progressions",
+  "Wrist curls / extensions", "Shoulder external rotation", "Hip flexor / hamstring stretch",
+];
+
 let currentUser = null;
 let state = {
   session: null,
   climbs: [],
+  exercises: [],
   draft: { grade: "V4", result: null, attempts: 1, tags: new Set(), notes: "" },
+  exerciseDraft: { category: "" },
   customTags: [],
+  startType: "climbing",
 };
 
 function $(id) { return document.getElementById(id); }
 function escapeHtml(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
 function todayIso() { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
 function timeLabel(iso) { const d = new Date(iso); return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }); }
+function numOrNull(v, isFloat) {
+  if (v === "" || v == null) return null;
+  const n = isFloat ? parseFloat(v) : parseInt(v, 10);
+  return Number.isNaN(n) ? null : n;
+}
 function showToast(msg) {
   const t = $("toast");
   t.textContent = msg;
@@ -343,9 +367,18 @@ function render() {
     main.innerHTML = renderStartCard();
     wireStartCard();
   } else {
-    main.innerHTML = renderSessionCard() + renderLogCard();
+    const s = state.session;
+    const showClimbs = s.session_type === "climbing" || s.session_type === "mixed";
+    const showStrength = s.session_type === "strength" || s.session_type === "mixed";
+    main.innerHTML =
+      renderSessionCard() +
+      renderPendingBanner() +
+      (showClimbs ? renderClimbSection() : "") +
+      (showStrength ? renderExerciseSection() : "");
     wireSessionCard();
-    wireLogCard();
+    wirePendingBanner();
+    if (showClimbs) wireClimbSection();
+    if (showStrength) wireExerciseSection();
   }
 }
 
@@ -359,13 +392,25 @@ function renderStartCard() {
         <label>Gym / location (optional)</label>
         <input type="text" id="s-location" placeholder="e.g. The Cave">
       </div>
-      <button class="btn btn-primary" id="s-start">Start Climbing Session</button>
+      <p class="eyebrow">Session type</p>
+      <div class="segmented" id="s-type">
+        <button type="button" data-value="climbing" class="${state.startType === "climbing" ? "active" : ""}">Climbing</button>
+        <button type="button" data-value="strength" class="${state.startType === "strength" ? "active" : ""}">Strength</button>
+        <button type="button" data-value="mixed" class="${state.startType === "mixed" ? "active" : ""}">Mixed</button>
+      </div>
+      <button class="btn btn-primary" id="s-start">Start Session</button>
     </div>
     <div class="signout-row"><button id="sign-out-btn">Sign out</button></div>
   `;
 }
 
 function wireStartCard() {
+  $("s-type").querySelectorAll("button").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      state.startType = btn.dataset.value;
+      $("s-type").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
+    })
+  );
   $("s-start").addEventListener("click", startSession);
   $("sign-out-btn").addEventListener("click", signOut);
 }
@@ -376,7 +421,7 @@ function renderSessionCard() {
     <div class="card">
       <div class="session-bar">
         <div class="session-bar-left">
-          <span class="session-bar-title">${escapeHtml(s.location || "Today’s session")}</span>
+          <span class="session-bar-title">${escapeHtml(s.location || "Today’s session")} <span class="badge attempt">${escapeHtml(s.session_type)}</span></span>
           <span class="session-bar-meta">started ${timeLabel(s.created_at)}</span>
         </div>
         <button class="btn-secondary btn" id="finish-btn" style="width:auto;">Finish</button>
@@ -389,12 +434,23 @@ function wireSessionCard() {
   $("finish-btn").addEventListener("click", openFinishSheet);
 }
 
-function renderLogCard() {
+function renderPendingBanner() {
+  const pendingCount = state.climbs.filter((c) => c._pending).length + state.exercises.filter((e) => e._pending).length;
+  if (!pendingCount) return "";
+  return `<div class="banner"><span>${pendingCount} item${pendingCount > 1 ? "s" : ""} waiting to save</span><button id="retry-pending">Retry</button></div>`;
+}
+
+function wirePendingBanner() {
+  const btn = $("retry-pending");
+  if (btn) btn.addEventListener("click", retryPending);
+}
+
+// ------------------------------------------------------------- climbs ---
+function renderClimbSection() {
   const draft = state.draft;
   const gradeChips = GRADES.map((g) => `<button type="button" class="grade-chip ${g === draft.grade ? "selected" : ""}" data-grade="${g}">${g}</button>`).join("");
   const allTags = TAG_PRESETS.concat(state.customTags.filter((t) => !TAG_PRESETS.includes(t)));
   const tagChips = allTags.map((t) => `<button type="button" class="chip ${draft.tags.has(t) ? "selected" : ""}" data-tag="${t}">${t.replace(/_/g, " ")}</button>`).join("");
-  const pendingCount = state.climbs.filter((c) => c._pending).length;
 
   const rows = state.climbs.length
     ? state.climbs.map((c) => `
@@ -417,7 +473,6 @@ function renderLogCard() {
     : `<p class="empty-hint">No climbs logged yet — add your first below.</p>`;
 
   return `
-    ${pendingCount ? `<div class="banner"><span>${pendingCount} climb${pendingCount > 1 ? "s" : ""} waiting to save</span><button id="retry-pending">Retry</button></div>` : ""}
     <div class="card">
       <p class="eyebrow">Grade</p>
       <div class="grade-strip" id="grade-strip">${gradeChips}</div>
@@ -452,7 +507,7 @@ function renderLogCard() {
     </div>
 
     <div class="card">
-      <p class="eyebrow">This session</p>
+      <p class="eyebrow">Climbs this session</p>
       ${rows}
     </div>
   `;
@@ -467,7 +522,7 @@ function renderMediaThumbs(climb) {
   ).join("");
 }
 
-function wireLogCard() {
+function wireClimbSection() {
   $("grade-strip").querySelectorAll(".grade-chip").forEach((btn) =>
     btn.addEventListener("click", () => {
       state.draft.grade = btn.dataset.grade;
@@ -518,20 +573,92 @@ function wireLogCard() {
   });
   $("c-notes")?.addEventListener("input", (e) => { state.draft.notes = e.target.value; });
   $("log-climb-btn").addEventListener("click", logClimb);
-  const retryBtn = $("retry-pending");
-  if (retryBtn) retryBtn.addEventListener("click", retryPending);
   document.querySelectorAll("[data-del]").forEach((btn) => btn.addEventListener("click", () => deleteClimb(btn.dataset.del)));
   document.querySelectorAll("[data-media-add]").forEach((btn) => btn.addEventListener("click", () => pickAndUploadMedia(btn.dataset.mediaAdd)));
+}
+
+// ---------------------------------------------------------- exercises ---
+function renderExerciseSection() {
+  const draft = state.exerciseDraft;
+  const categoryChips = EXERCISE_CATEGORIES.map((c) =>
+    `<button type="button" class="chip ${draft.category === c ? "selected" : ""}" data-category="${c}">${CATEGORY_LABELS[c]}</button>`
+  ).join("");
+  const commonList = COMMON_EXERCISE_NAMES.map((n) => `<option value="${escapeHtml(n)}">`).join("");
+
+  const rows = state.exercises.length
+    ? state.exercises.map((ex) => {
+        const meta = [ex.sets ? `${ex.sets} sets` : null, ex.reps ? `${ex.reps} reps` : null, ex.weight_kg ? `${ex.weight_kg} kg` : null].filter(Boolean);
+        return `
+      <div class="log-row" data-id="${ex.id}">
+        <div class="log-main">
+          <div class="log-badges">
+            <span class="badge ${ex._pending ? "pending" : "attempt"}">${ex._pending ? "saving…" : (CATEGORY_LABELS[ex.category] || ex.category)}</span>
+            <strong>${escapeHtml(ex.exercise_name)}</strong>
+          </div>
+          ${meta.length ? `<div class="log-tags">${meta.join(" · ")}</div>` : ""}
+          ${ex.notes ? `<div class="log-tags">${escapeHtml(ex.notes)}</div>` : ""}
+        </div>
+        <div class="log-actions">
+          <div class="log-time">${timeLabel(ex.created_at)}</div>
+          <button class="log-del" data-del-ex="${ex.id}" aria-label="Delete">&times;</button>
+        </div>
+      </div>`;
+      }).join("")
+    : `<p class="empty-hint">No exercises logged yet — add your first below.</p>`;
+
+  return `
+    <div class="card">
+      <p class="eyebrow">Exercise</p>
+      <div class="field">
+        <input type="text" id="e-name" list="common-exercises" placeholder="e.g. Fingerboard repeaters">
+        <datalist id="common-exercises">${commonList}</datalist>
+      </div>
+
+      <p class="eyebrow">Category</p>
+      <div class="chip-group" id="category-group">${categoryChips}</div>
+
+      <p class="eyebrow">Sets / Reps / Weight (kg)</p>
+      <div class="field-row">
+        <input type="number" min="0" id="e-sets" placeholder="Sets">
+        <input type="number" min="0" id="e-reps" placeholder="Reps">
+        <input type="number" min="0" step="0.5" id="e-weight" placeholder="kg">
+      </div>
+
+      <div class="field"><textarea id="e-notes" placeholder="Notes (optional)"></textarea></div>
+
+      <button class="btn btn-primary" id="log-exercise-btn">Log Exercise</button>
+    </div>
+
+    <div class="card">
+      <p class="eyebrow">Strength this session</p>
+      ${rows}
+    </div>
+  `;
+}
+
+function wireExerciseSection() {
+  $("category-group").querySelectorAll(".chip").forEach((chip) =>
+    chip.addEventListener("click", () => {
+      state.exerciseDraft.category = chip.dataset.category;
+      $("category-group").querySelectorAll(".chip").forEach((c) => c.classList.toggle("selected", c === chip));
+    })
+  );
+  $("log-exercise-btn").addEventListener("click", logExercise);
+  document.querySelectorAll("[data-del-ex]").forEach((btn) => btn.addEventListener("click", () => deleteExercise(btn.dataset.delEx)));
 }
 
 // ---- session ops ----
 async function loadTodaySession() {
   const { data: sessions, error } = await sb.from("sessions").select("*").eq("date", todayIso()).eq("active", true).limit(1);
   if (error) { showToast("Couldn't load today's session"); return; }
-  if (!sessions.length) { state.session = null; state.climbs = []; return; }
+  if (!sessions.length) { state.session = null; state.climbs = []; state.exercises = []; return; }
   state.session = sessions[0];
-  const { data: climbs } = await sb.from("climbs").select("*").eq("session_id", state.session.id).order("created_at", { ascending: false });
+  const [{ data: climbs }, { data: exercises }] = await Promise.all([
+    sb.from("climbs").select("*").eq("session_id", state.session.id).order("created_at", { ascending: false }),
+    sb.from("strength_exercises").select("*").eq("session_id", state.session.id).order("created_at", { ascending: false }),
+  ]);
   state.climbs = climbs || [];
+  state.exercises = exercises || [];
   if (state.climbs.length) await attachMediaToClimbs();
 }
 
@@ -557,7 +684,7 @@ async function startSession() {
   btn.disabled = true;
   const body = {
     date: todayIso(),
-    session_type: "climbing",
+    session_type: state.startType,
     location: $("s-location").value.trim() || null,
     active: true,
   };
@@ -566,6 +693,7 @@ async function startSession() {
     if (error) throw error;
     state.session = data;
     state.climbs = [];
+    state.exercises = [];
     render();
   } catch (err) {
     showToast("Couldn’t start session: " + err.message);
@@ -577,7 +705,12 @@ async function startSession() {
 function signOut() {
   sb.auth.signOut();
   currentUser = null;
-  state = { session: null, climbs: [], draft: { grade: "V4", result: null, attempts: 1, tags: new Set(), notes: "" }, customTags: [] };
+  state = {
+    session: null, climbs: [], exercises: [],
+    draft: { grade: "V4", result: null, attempts: 1, tags: new Set(), notes: "" },
+    exerciseDraft: { category: "" },
+    customTags: [], startType: "climbing",
+  };
   renderAuthCard();
 }
 
@@ -613,13 +746,63 @@ async function logClimb() {
   }
 }
 
+async function deleteClimb(id) {
+  state.climbs = state.climbs.filter((c) => c.id !== id);
+  render();
+  if (!id.startsWith("local-")) {
+    try { await sb.from("climbs").delete().eq("id", id); } catch (err) { showToast("Couldn’t delete on server"); }
+  }
+}
+
+// ---- exercise ops ----
+async function logExercise() {
+  const name = $("e-name").value.trim();
+  const category = state.exerciseDraft.category;
+  if (!name) { showToast("Enter an exercise name"); return; }
+  if (!category) { showToast("Pick a category"); return; }
+  const localId = "local-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
+  const body = {
+    session_id: state.session.id,
+    exercise_name: name,
+    category,
+    sets: numOrNull($("e-sets").value),
+    reps: numOrNull($("e-reps").value),
+    weight_kg: numOrNull($("e-weight").value, true),
+    notes: $("e-notes").value.trim() || null,
+  };
+  const optimistic = { id: localId, ...body, created_at: new Date().toISOString(), _pending: true };
+  state.exercises.unshift(optimistic);
+  state.exerciseDraft = { category };
+  render();
+  setStatus("saving", "saving…");
+  try {
+    const { data, error } = await sb.from("strength_exercises").insert(body).select().single();
+    if (error) throw error;
+    const item = state.exercises.find((e) => e.id === localId);
+    if (item) { Object.assign(item, data); item._pending = false; }
+    setStatus("ok", "saved");
+    render();
+  } catch (err) {
+    setStatus("offline", "will retry");
+    showToast("Couldn’t save — tap Retry when back online");
+  }
+}
+
+async function deleteExercise(id) {
+  state.exercises = state.exercises.filter((e) => e.id !== id);
+  render();
+  if (!id.startsWith("local-")) {
+    try { await sb.from("strength_exercises").delete().eq("id", id); } catch (err) { showToast("Couldn’t delete on server"); }
+  }
+}
+
 async function retryPending() {
-  const pending = state.climbs.filter((c) => c._pending);
-  if (!pending.length) return;
+  const pendingClimbs = state.climbs.filter((c) => c._pending);
+  const pendingExercises = state.exercises.filter((e) => e._pending);
+  if (!pendingClimbs.length && !pendingExercises.length) return;
   setStatus("saving", "syncing…");
-  for (const item of pending) {
+  for (const item of pendingClimbs) {
     try {
-      const localId = item.id;
       const { id, _pending, media, created_at, ...body } = item;
       const { data, error } = await sb.from("climbs").insert(body).select().single();
       if (error) throw error;
@@ -628,17 +811,18 @@ async function retryPending() {
       item.media = [];
     } catch (err) { /* still offline */ }
   }
-  const stillPending = state.climbs.some((c) => c._pending);
+  for (const item of pendingExercises) {
+    try {
+      const { id, _pending, created_at, ...body } = item;
+      const { data, error } = await sb.from("strength_exercises").insert(body).select().single();
+      if (error) throw error;
+      Object.assign(item, data);
+      item._pending = false;
+    } catch (err) { /* still offline */ }
+  }
+  const stillPending = state.climbs.some((c) => c._pending) || state.exercises.some((e) => e._pending);
   setStatus(stillPending ? "offline" : "ok", stillPending ? "will retry" : "saved");
   render();
-}
-
-async function deleteClimb(id) {
-  state.climbs = state.climbs.filter((c) => c.id !== id);
-  render();
-  if (!id.startsWith("local-")) {
-    try { await sb.from("climbs").delete().eq("id", id); } catch (err) { showToast("Couldn’t delete on server"); }
-  }
 }
 
 // ---- media ops ----
@@ -714,6 +898,8 @@ async function finishSession() {
   }
   state.session = null;
   state.climbs = [];
+  state.exercises = [];
+  state.startType = "climbing";
   render();
 }
 

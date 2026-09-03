@@ -254,7 +254,36 @@
   .log-tags { font-size: 12px; color: var(--ink-dim); margin-top: 2px; }
   .log-time { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--ink-faint); flex-shrink: 0; }
   .log-del { background: none; border: none; color: var(--ink-faint); font-size: 18px; padding: 4px 6px; flex-shrink: 0; }
+  .log-edit { background: none; border: none; color: var(--ink-faint); font-size: 15px; padding: 4px 6px; flex-shrink: 0; }
   .log-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .log-row-actions-row { display: flex; gap: 2px; }
+
+  .modal-root { position: fixed; inset: 0; z-index: 500; }
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: flex-end; justify-content: center; }
+  .modal-card {
+    background: var(--surface-raised); border: 1px solid var(--border); border-radius: 18px 18px 0 0;
+    padding: 20px 18px calc(20px + env(safe-area-inset-bottom, 0px));
+    width: 100%; max-width: 480px; max-height: 88vh; overflow-y: auto; box-shadow: var(--shadow);
+  }
+  .modal-card h3 { font-family: "Big Shoulders Display", sans-serif; font-weight: 800; font-size: 20px; margin: 0 0 14px; }
+
+  .hist-row { padding: 13px 4px; border-bottom: 1px solid var(--border); }
+  .hist-row:last-child { border-bottom: none; }
+  .hist-row-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; }
+  .hist-row-title { font-family: "Big Shoulders Display", sans-serif; font-weight: 800; font-size: 17px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .hist-row-meta { font-size: 12px; color: var(--ink-dim); font-family: "IBM Plex Mono", monospace; margin-top: 2px; }
+  .hist-row-chevron { color: var(--ink-faint); font-size: 13px; flex-shrink: 0; transition: transform .15s ease; }
+  .hist-row.expanded .hist-row-chevron { transform: rotate(90deg); }
+  .hist-row-detail { margin-top: 12px; }
+  .hist-row-detail h4 {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--ink-faint); margin: 14px 0 4px;
+  }
+
+  .admin-row { padding: 12px 4px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .admin-row:last-child { border-bottom: none; }
+  .admin-row-email { font-weight: 600; font-size: 14px; }
+  .admin-row-meta { font-size: 11.5px; color: var(--ink-dim); margin-top: 2px; }
 
   .media-row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
   .media-thumb { width: 52px; height: 52px; border-radius: 8px; object-fit: cover; border: 1px solid var(--border); }
@@ -331,7 +360,9 @@
     </div>
     <div class="tab-row" id="tab-row" hidden>
       <button type="button" class="tab-btn active" data-tab="log">Log</button>
+      <button type="button" class="tab-btn" data-tab="history">History</button>
       <button type="button" class="tab-btn" data-tab="stats">Stats</button>
+      <button type="button" class="tab-btn" data-tab="admin" id="admin-tab-btn" hidden>Admin</button>
     </div>
   </header>
 
@@ -340,6 +371,7 @@
   </main>
 </div>
 
+<div id="modal-root" class="modal-root" hidden></div>
 <div id="toast" class="toast" hidden></div>
 
 <script>
@@ -461,6 +493,7 @@ async function handleAuth() {
     }
     currentUser = data.user;
     await loadTodaySession();
+    checkAdminStatus();
     render();
   } catch (err) {
     renderAuthCard(err.message || "Couldn't sign in.");
@@ -486,6 +519,14 @@ function render() {
   const main = $("main");
   if (state.tab === "stats") {
     renderStatsView();
+    return;
+  }
+  if (state.tab === "history") {
+    renderHistoryView();
+    return;
+  }
+  if (state.tab === "admin") {
+    renderAdminView();
     return;
   }
   if (!state.session) {
@@ -592,7 +633,10 @@ function renderClimbSection() {
         </div>
         <div class="log-actions">
           <div class="log-time">${timeLabel(c.created_at)}</div>
-          <button class="log-del" data-del="${c.id}" aria-label="Delete">&times;</button>
+          <div class="log-row-actions-row">
+            ${c._pending ? "" : `<button class="log-edit" data-edit="${c.id}" aria-label="Edit">✏️</button>`}
+            <button class="log-del" data-del="${c.id}" aria-label="Delete">&times;</button>
+          </div>
         </div>
       </div>
     `).join("")
@@ -735,6 +779,23 @@ function wireClimbSection() {
   $("stage-media-clear")?.addEventListener("click", clearStagedMedia);
   document.querySelectorAll("[data-del]").forEach((btn) => btn.addEventListener("click", () => deleteClimb(btn.dataset.del)));
   document.querySelectorAll("[data-media-add]").forEach((btn) => btn.addEventListener("click", () => pickAndUploadMedia(btn.dataset.mediaAdd)));
+  document.querySelectorAll("[data-edit]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const climb = state.climbs.find((c) => c.id === btn.dataset.edit);
+      if (!climb) return;
+      openClimbEditModal(climb, {
+        onSaved: (updated) => {
+          const idx = state.climbs.findIndex((c) => c.id === climb.id);
+          if (idx >= 0) state.climbs[idx] = updated;
+          render();
+        },
+        onDeleted: (id) => {
+          state.climbs = state.climbs.filter((c) => c.id !== id);
+          render();
+        },
+      });
+    })
+  );
 }
 
 // ---------------------------------------------------------- exercises ---
@@ -760,7 +821,10 @@ function renderExerciseSection() {
         </div>
         <div class="log-actions">
           <div class="log-time">${timeLabel(ex.created_at)}</div>
-          <button class="log-del" data-del-ex="${ex.id}" aria-label="Delete">&times;</button>
+          <div class="log-row-actions-row">
+            ${ex._pending ? "" : `<button class="log-edit" data-edit-ex="${ex.id}" aria-label="Edit">✏️</button>`}
+            <button class="log-del" data-del-ex="${ex.id}" aria-label="Delete">&times;</button>
+          </div>
         </div>
       </div>`;
       }).join("")
@@ -807,6 +871,23 @@ function wireExerciseSection() {
   $("e-bodyweight").addEventListener("change", (e) => { state.exerciseDraft.isBodyweight = e.target.checked; });
   $("log-exercise-btn").addEventListener("click", logExercise);
   document.querySelectorAll("[data-del-ex]").forEach((btn) => btn.addEventListener("click", () => deleteExercise(btn.dataset.delEx)));
+  document.querySelectorAll("[data-edit-ex]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const ex = state.exercises.find((e) => e.id === btn.dataset.editEx);
+      if (!ex) return;
+      openExerciseEditModal(ex, {
+        onSaved: (updated) => {
+          const idx = state.exercises.findIndex((e) => e.id === ex.id);
+          if (idx >= 0) state.exercises[idx] = updated;
+          render();
+        },
+        onDeleted: (id) => {
+          state.exercises = state.exercises.filter((e) => e.id !== id);
+          render();
+        },
+      });
+    })
+  );
 }
 
 // --------------------------------------------------------------- stats ---
@@ -980,6 +1061,382 @@ async function renderStatsView() {
   }
 }
 
+// ---------------------------------------------------------------- history ---
+let historyState = { sessions: null, expandedId: null, detail: null };
+
+async function renderHistoryView() {
+  const main = $("main");
+  if (historyState.sessions === null) {
+    main.innerHTML = `<p class="empty-hint">Loading…</p>`;
+    const { data, error } = await sb.from("sessions").select("*").order("date", { ascending: false }).order("created_at", { ascending: false });
+    if (error) { main.innerHTML = `<p class="empty-hint">Couldn't load history: ${escapeHtml(error.message)}</p>`; return; }
+    historyState.sessions = data || [];
+  }
+  main.innerHTML = renderHistoryListHtml();
+  wireHistoryList();
+}
+
+function renderHistoryListHtml() {
+  if (!historyState.sessions.length) {
+    return `<div class="card"><p class="empty-hint">No sessions yet. Start one from the Log tab.</p></div>`;
+  }
+  const rows = historyState.sessions.map((s) => {
+    const expanded = historyState.expandedId === s.id;
+    const meta = [
+      s.location || "no location",
+      s.duration_minutes ? `${s.duration_minutes} min` : null,
+      s.rpe ? `RPE ${s.rpe}` : null,
+    ].filter(Boolean).join(" · ");
+    return `
+      <div class="hist-row ${expanded ? "expanded" : ""}">
+        <div class="hist-row-head" data-toggle="${s.id}">
+          <div>
+            <div class="hist-row-title">${formatDateFull(s.date)} <span class="badge attempt">${escapeHtml(s.session_type)}</span></div>
+            <div class="hist-row-meta">${escapeHtml(meta)}</div>
+          </div>
+          <span class="hist-row-chevron">▶</span>
+        </div>
+        ${expanded ? `<div class="hist-row-detail" id="hist-detail-${s.id}">${renderHistoryDetailBody(s)}</div>` : ""}
+      </div>
+    `;
+  }).join("");
+  return `<div class="card">${rows}</div>`;
+}
+
+function renderHistoryDetailBody(s) {
+  const detail = historyState.detail;
+  if (!detail || detail.loading) return `<p class="empty-hint">Loading…</p>`;
+  const showClimbs = s.session_type === "climbing" || s.session_type === "mixed";
+  const showStrength = s.session_type === "strength" || s.session_type === "mixed";
+  const climbRows = detail.climbs.length ? detail.climbs.map(historyClimbRowHtml).join("") : `<p class="empty-hint">No climbs logged.</p>`;
+  const exRows = detail.exercises.length ? detail.exercises.map(historyExerciseRowHtml).join("") : `<p class="empty-hint">No exercises logged.</p>`;
+  return `
+    ${showClimbs ? `<h4>Climbs</h4>${climbRows}` : ""}
+    ${showStrength ? `<h4>Strength</h4>${exRows}` : ""}
+    ${s.notes ? `<h4>Session notes</h4><p class="log-tags">${escapeHtml(s.notes)}</p>` : ""}
+    <div class="finish-block" style="margin-top:14px;"><button class="btn-danger-text" data-del-session="${s.id}">Delete this session</button></div>
+  `;
+}
+
+function historyClimbRowHtml(c) {
+  return `
+    <div class="log-row" data-id="${c.id}">
+      <div class="log-grade">${c.grade_label}</div>
+      <div class="log-main">
+        <div class="log-badges">
+          <span class="badge ${c.result}">${c.result}</span>
+          ${c.attempts > 1 ? `<span class="log-tags">${c.attempts} attempts</span>` : ""}
+        </div>
+        ${c.tags && c.tags.length ? `<div class="log-tags">${c.tags.map((t) => t.replace(/_/g, " ")).join(", ")}</div>` : ""}
+        ${routeRefHtml(c)}
+        <div class="media-row" id="hist-media-${c.id}">${renderMediaThumbs(c)}<button class="media-add-btn" data-hist-media-add="${c.id}" title="Add photo or video" aria-label="Add photo or video">📷+</button></div>
+      </div>
+      <div class="log-actions">
+        <div class="log-time">${timeLabel(c.created_at)}</div>
+        <div class="log-row-actions-row">
+          <button class="log-edit" data-hist-edit="${c.id}" aria-label="Edit">✏️</button>
+          <button class="log-del" data-hist-del="${c.id}" aria-label="Delete">&times;</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function historyExerciseRowHtml(ex) {
+  const meta = [ex.sets ? `${ex.sets} sets` : null, ex.reps ? `${ex.reps} reps` : null, weightLabel(ex)].filter(Boolean);
+  return `
+    <div class="log-row" data-id="${ex.id}">
+      <div class="log-main">
+        <div class="log-badges">
+          <span class="badge attempt">${CATEGORY_LABELS[ex.category] || ex.category}</span>
+          <strong>${escapeHtml(ex.exercise_name)}</strong>
+        </div>
+        ${meta.length ? `<div class="log-tags">${meta.join(" · ")}</div>` : ""}
+        ${ex.notes ? `<div class="log-tags">${escapeHtml(ex.notes)}</div>` : ""}
+      </div>
+      <div class="log-actions">
+        <div class="log-time">${timeLabel(ex.created_at)}</div>
+        <div class="log-row-actions-row">
+          <button class="log-edit" data-hist-edit-ex="${ex.id}" aria-label="Edit">✏️</button>
+          <button class="log-del" data-hist-del-ex="${ex.id}" aria-label="Delete">&times;</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function wireHistoryList() {
+  document.querySelectorAll("[data-toggle]").forEach((el) => el.addEventListener("click", () => toggleHistorySession(el.dataset.toggle)));
+  wireHistoryDetailActions();
+}
+
+async function toggleHistorySession(id) {
+  if (historyState.expandedId === id) {
+    historyState.expandedId = null;
+    historyState.detail = null;
+    render();
+    return;
+  }
+  historyState.expandedId = id;
+  historyState.detail = { loading: true };
+  render();
+  const [{ data: climbs }, { data: exercises }] = await Promise.all([
+    sb.from("climbs").select("*").eq("session_id", id).order("created_at", { ascending: false }),
+    sb.from("strength_exercises").select("*").eq("session_id", id).order("created_at", { ascending: false }),
+  ]);
+  historyState.detail = { loading: false, climbs: climbs || [], exercises: exercises || [] };
+  if (historyState.detail.climbs.length) {
+    const ids = historyState.detail.climbs.map((c) => c.id);
+    const { data: mediaRows } = await sb.from("media").select("*").in("climb_id", ids);
+    for (const c of historyState.detail.climbs) {
+      c.media = (mediaRows || []).filter((m) => m.climb_id === c.id);
+      for (const m of c.media) m._url = await signedUrl(m.storage_path);
+    }
+  }
+  render();
+}
+
+function wireHistoryDetailActions() {
+  document.querySelectorAll("[data-hist-edit]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const climb = historyState.detail.climbs.find((c) => c.id === btn.dataset.histEdit);
+      if (!climb) return;
+      openClimbEditModal(climb, {
+        onSaved: (updated) => {
+          const idx = historyState.detail.climbs.findIndex((c) => c.id === climb.id);
+          if (idx >= 0) historyState.detail.climbs[idx] = { ...climb, ...updated, media: climb.media };
+          render();
+        },
+        onDeleted: (id) => {
+          historyState.detail.climbs = historyState.detail.climbs.filter((c) => c.id !== id);
+          render();
+        },
+      });
+    })
+  );
+  document.querySelectorAll("[data-hist-del]").forEach((btn) => btn.addEventListener("click", () => deleteHistoryClimb(btn.dataset.histDel)));
+  document.querySelectorAll("[data-hist-media-add]").forEach((btn) => btn.addEventListener("click", () => pickAndUploadMediaForHistory(btn.dataset.histMediaAdd)));
+  document.querySelectorAll("[data-hist-edit-ex]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const ex = historyState.detail.exercises.find((e) => e.id === btn.dataset.histEditEx);
+      if (!ex) return;
+      openExerciseEditModal(ex, {
+        onSaved: (updated) => {
+          const idx = historyState.detail.exercises.findIndex((e) => e.id === ex.id);
+          if (idx >= 0) historyState.detail.exercises[idx] = updated;
+          render();
+        },
+        onDeleted: (id) => {
+          historyState.detail.exercises = historyState.detail.exercises.filter((e) => e.id !== id);
+          render();
+        },
+      });
+    })
+  );
+  document.querySelectorAll("[data-hist-del-ex]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.histDelEx;
+      try {
+        await sb.from("strength_exercises").delete().eq("id", id);
+        historyState.detail.exercises = historyState.detail.exercises.filter((e) => e.id !== id);
+        render();
+      } catch (err) { showToast("Couldn’t delete: " + err.message); }
+    })
+  );
+  document.querySelectorAll("[data-del-session]").forEach((btn) => btn.addEventListener("click", () => deleteHistorySession(btn.dataset.delSession)));
+}
+
+async function deleteHistoryClimb(id) {
+  const climb = historyState.detail.climbs.find((c) => c.id === id);
+  try {
+    const media = climb?.media || [];
+    if (media.length) await sb.storage.from("media").remove(media.map((m) => m.storage_path));
+    await sb.from("climbs").delete().eq("id", id);
+    historyState.detail.climbs = historyState.detail.climbs.filter((c) => c.id !== id);
+    render();
+  } catch (err) { showToast("Couldn’t delete: " + err.message); }
+}
+
+async function pickAndUploadMediaForHistory(climbId) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*,video/*";
+  input.capture = "environment";
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const mediaType = file.type.startsWith("video/") ? "video" : "image";
+    const ext = (file.name.split(".").pop() || (mediaType === "video" ? "mp4" : "jpg")).toLowerCase();
+    const path = `${currentUser.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    try {
+      const { error: uploadErr } = await sb.storage.from("media").upload(path, file);
+      if (uploadErr) throw uploadErr;
+      const { data, error } = await sb.from("media").insert({
+        climb_id: climbId, storage_path: path, media_type: mediaType, original_filename: file.name,
+      }).select().single();
+      if (error) throw error;
+      data._url = mediaType === "image" ? await signedUrl(path) : "";
+      const climb = historyState.detail.climbs.find((c) => c.id === climbId);
+      if (climb) climb.media = (climb.media || []).concat(data);
+      render();
+      showToast("Media attached");
+    } catch (err) { showToast("Couldn’t upload: " + err.message); }
+  };
+  input.click();
+}
+
+async function deleteHistorySession(id) {
+  if (!confirm("Delete this whole session? This removes all its climbs, exercises, and media.")) return;
+  try {
+    const { data: sessionMedia } = await sb.from("media").select("storage_path").eq("session_id", id);
+    const { data: sessionClimbs } = await sb.from("climbs").select("id").eq("session_id", id);
+    const climbIds = (sessionClimbs || []).map((c) => c.id);
+    let climbMedia = [];
+    if (climbIds.length) {
+      climbMedia = (await sb.from("media").select("storage_path").in("climb_id", climbIds)).data || [];
+    }
+    const paths = [...(sessionMedia || []), ...climbMedia].map((m) => m.storage_path);
+    if (paths.length) await sb.storage.from("media").remove(paths);
+    await sb.from("sessions").delete().eq("id", id);
+    historyState.sessions = historyState.sessions.filter((s) => s.id !== id);
+    historyState.expandedId = null;
+    historyState.detail = null;
+    render();
+    showToast("Session deleted");
+  } catch (err) { showToast("Couldn’t delete session: " + err.message); }
+}
+
+// ------------------------------------------------------------------ admin ---
+// Visible only to accounts in public.admins (migrations/0002_admin_analytics.sql).
+// RLS is the real boundary -- a non-admin's queries here just come back scoped
+// to their own rows same as everywhere else, not an error, so hiding the tab
+// is purely a UX nicety.
+let isAdminUser = false;
+let adminData = null;
+
+async function checkAdminStatus() {
+  try {
+    const { data, error } = await sb.rpc("is_admin");
+    if (error) throw error;
+    isAdminUser = !!data;
+  } catch (err) {
+    isAdminUser = false;
+  }
+  $("admin-tab-btn").hidden = !isAdminUser;
+}
+
+async function renderAdminView() {
+  const main = $("main");
+  if (!isAdminUser) {
+    main.innerHTML = `<div class="card"><p class="empty-hint">Admin access only.</p></div>`;
+    return;
+  }
+  if (!adminData) {
+    main.innerHTML = `<p class="empty-hint">Loading…</p>`;
+    try {
+      const [{ data: sessions, error: e1 }, { data: climbs, error: e2 }, { data: exercises, error: e3 }, { data: profiles, error: e4 }] = await Promise.all([
+        sb.from("sessions").select("*"),
+        sb.from("climbs").select("*"),
+        sb.from("strength_exercises").select("*"),
+        sb.from("profiles").select("*"),
+      ]);
+      const error = e1 || e2 || e3 || e4;
+      if (error) throw error;
+      adminData = buildAdminOverview(sessions || [], climbs || [], exercises || [], profiles || []);
+    } catch (err) {
+      main.innerHTML = `<p class="empty-hint">Couldn't load admin data: ${escapeHtml(err.message)}</p>`;
+      return;
+    }
+  }
+  main.innerHTML = renderAdminOverviewHtml(adminData);
+  wireAdminOverview();
+}
+
+function buildAdminOverview(sessions, climbs, exercises, profiles) {
+  const emails = Object.fromEntries(profiles.map((p) => [p.user_id, p.email]));
+  const dateBySession = Object.fromEntries(sessions.map((s) => [s.id, s.date]));
+  const climbsWithDate = climbs.map((c) => ({ ...c, session_date: dateBySession[c.session_id] }));
+
+  const byUser = {};
+  const bucket = (uid) => byUser[uid] || (byUser[uid] = { sessions: [], climbs: [], exercises: [] });
+  for (const s of sessions) bucket(s.user_id).sessions.push(s);
+  for (const c of climbsWithDate) bucket(c.user_id).climbs.push(c);
+  for (const e of exercises) bucket(e.user_id).exercises.push(e);
+
+  const users = Object.entries(byUser).map(([uid, rows]) => {
+    const summary = computeSummary(rows.sessions, rows.climbs);
+    const lastDate = rows.sessions.length ? rows.sessions.map((s) => s.date).sort().slice(-1)[0] : null;
+    return {
+      user_id: uid,
+      email: emails[uid] || uid,
+      last_session_date: lastDate,
+      summary,
+      grade_pyramid: computeGradePyramid(rows.climbs),
+      progress_over_time: computeProgressOverTime(rows.climbs),
+      top_tags: computeTopTags(rows.climbs),
+      strength_volume: computeStrengthVolume(rows.exercises),
+    };
+  }).sort((a, b) => b.summary.total_sessions - a.summary.total_sessions);
+
+  return { users, totals: { summary: computeSummary(sessions, climbsWithDate) } };
+}
+
+function renderAdminOverviewHtml(data) {
+  if (!data.users.length) {
+    return `<div class="card"><p class="empty-hint">No one has logged anything yet.</p></div>`;
+  }
+  const rows = data.users.map((u) => `
+    <div class="admin-row">
+      <div>
+        <div class="admin-row-email">${escapeHtml(u.email)}</div>
+        <div class="admin-row-meta">${[
+          `${u.summary.total_sessions} sessions`,
+          `${u.summary.total_climbs} climbs`,
+          u.summary.hardest_grade ? `hardest ${u.summary.hardest_grade}` : null,
+          u.last_session_date ? `last ${formatDateShort(u.last_session_date)}` : null,
+        ].filter(Boolean).join(" · ")}</div>
+      </div>
+      <button type="button" class="btn btn-secondary" style="width:auto;" data-admin-view="${escapeHtml(u.user_id)}">View</button>
+    </div>
+  `).join("");
+  return `
+    <div class="kpi-row">
+      ${kpiTileHtml("Users", data.users.length)}
+      ${kpiTileHtml("Sessions", data.totals.summary.total_sessions)}
+      ${kpiTileHtml("Climbs", data.totals.summary.total_climbs)}
+      ${kpiTileHtml("Hardest Send", data.totals.summary.hardest_grade || "—")}
+    </div>
+    <div class="card"><p class="eyebrow">Per-user breakdown</p>${rows}</div>
+    <div id="admin-detail"></div>
+  `;
+}
+
+function wireAdminOverview() {
+  document.querySelectorAll("[data-admin-view]").forEach((btn) => btn.addEventListener("click", () => showAdminUserDetail(btn.dataset.adminView)));
+}
+
+function showAdminUserDetail(userId) {
+  const u = adminData.users.find((x) => x.user_id === userId);
+  if (!u) return;
+  const detail = $("admin-detail");
+  detail.innerHTML = `
+    <div class="card">
+      <p class="eyebrow">${escapeHtml(u.email)}</p>
+      <div class="kpi-row">
+        ${kpiTileHtml("Sessions", u.summary.total_sessions)}
+        ${kpiTileHtml("Climbs", u.summary.total_climbs)}
+        ${kpiTileHtml("Hardest Send", u.summary.hardest_grade || "—")}
+        ${kpiTileHtml("Send Rate", u.summary.send_rate != null ? u.summary.send_rate : "—", u.summary.send_rate != null ? "%" : "")}
+      </div>
+    </div>
+    <div class="card"><p class="eyebrow">Grade Pyramid</p>${gradePyramidHtml(u.grade_pyramid)}</div>
+    <div class="card"><p class="eyebrow">Sends Over Time</p>${progressChartHtml(u.progress_over_time)}</div>
+    <div class="card"><p class="eyebrow">Top Technique Tags</p>${tagsChartHtml(u.top_tags)}</div>
+    <div class="card"><p class="eyebrow">Strength Training Volume</p>${strengthChartHtml(u.strength_volume)}</div>
+  `;
+  detail.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 // ---- session ops ----
 async function loadTodaySession() {
   const { data: sessions, error } = await sb.from("sessions").select("*").eq("date", todayIso()).eq("active", true).limit(1);
@@ -1027,6 +1484,7 @@ async function startSession() {
     state.session = data;
     state.climbs = [];
     state.exercises = [];
+    historyState.sessions = null;
     render();
   } catch (err) {
     showToast("Couldn’t start session: " + err.message);
@@ -1044,8 +1502,158 @@ function signOut() {
     exerciseDraft: { category: "", isBodyweight: false },
     customTags: [], startType: "climbing", tab: "log",
   };
+  historyState = { sessions: null, expandedId: null, detail: null };
+  isAdminUser = false;
+  adminData = null;
+  $("admin-tab-btn").hidden = true;
   $("tab-row").hidden = true;
   renderAuthCard();
+}
+
+// ---- modal ----
+function openModal(innerHtml) {
+  const root = $("modal-root");
+  root.innerHTML = `<div class="modal-backdrop"><div class="modal-card">${innerHtml}</div></div>`;
+  root.hidden = false;
+  root.querySelector(".modal-backdrop").addEventListener("click", (e) => {
+    if (e.target.classList.contains("modal-backdrop")) closeModal();
+  });
+}
+function closeModal() {
+  const root = $("modal-root");
+  root.hidden = true;
+  root.innerHTML = "";
+}
+
+// Shared climb/exercise edit dialogs -- used by both the Log tab (today's
+// session) and History (past sessions). Callers own their own array and
+// patch it via onSaved/onDeleted rather than this touching global state.
+function openClimbEditModal(climb, { onSaved, onDeleted }) {
+  const selectedTags = new Set(climb.tags || []);
+  const allTags = TAG_PRESETS.concat(state.customTags.filter((t) => !TAG_PRESETS.includes(t)));
+  const gradeOptions = GRADES.map((g) => `<option value="${g}" ${g === climb.grade_label ? "selected" : ""}>${g}</option>`).join("");
+  openModal(`
+    <h3>Edit Climb</h3>
+    <div class="field"><label>Grade</label><select id="m-grade">${gradeOptions}</select></div>
+    <div class="field">
+      <label>Result</label>
+      <div class="segmented" id="m-result">
+        ${["flash", "send", "attempt"].map((r) => `<button type="button" data-value="${r}" class="${r === climb.result ? "active " + r : ""}">${r[0].toUpperCase() + r.slice(1)}</button>`).join("")}
+      </div>
+    </div>
+    <div class="field"><label>Attempts</label><input type="number" min="1" id="m-attempts" value="${climb.attempts}"></div>
+    <div class="field">
+      <label>Tags</label>
+      <div class="chip-group" id="m-tags">${allTags.map((t) => `<button type="button" class="chip ${selectedTags.has(t) ? "selected" : ""}" data-tag="${t}">${t.replace(/_/g, " ")}</button>`).join("")}</div>
+    </div>
+    <div class="field"><label>Notes</label><textarea id="m-notes">${escapeHtml(climb.notes || "")}</textarea></div>
+    <div class="field"><label>Route</label><input type="text" id="m-route" value="${escapeHtml(climb.route_ref || "")}"></div>
+    <button class="btn btn-primary" id="m-save">Save</button>
+    <div class="finish-block"><button class="btn-danger-text" id="m-delete">Delete climb</button></div>
+    <div class="finish-block"><button class="btn-danger-text" id="m-cancel" style="color:var(--ink-faint);">Cancel</button></div>
+  `);
+  let selectedResult = climb.result;
+  $("m-result").querySelectorAll("button").forEach((b) =>
+    b.addEventListener("click", () => {
+      selectedResult = b.dataset.value;
+      $("m-result").querySelectorAll("button").forEach((x) => { x.className = x === b ? "active " + x.dataset.value : ""; });
+    })
+  );
+  $("m-tags").querySelectorAll(".chip").forEach((chip) =>
+    chip.addEventListener("click", () => {
+      const name = chip.dataset.tag;
+      if (selectedTags.has(name)) { selectedTags.delete(name); chip.classList.remove("selected"); }
+      else { selectedTags.add(name); chip.classList.add("selected"); }
+    })
+  );
+  $("m-cancel").addEventListener("click", closeModal);
+  $("m-delete").addEventListener("click", async () => {
+    if (!confirm("Delete this climb?")) return;
+    try {
+      const media = climb.media || [];
+      if (media.length) await sb.storage.from("media").remove(media.map((m) => m.storage_path));
+      await sb.from("climbs").delete().eq("id", climb.id);
+      closeModal();
+      onDeleted(climb.id);
+      showToast("Climb deleted");
+    } catch (err) { showToast("Couldn’t delete: " + err.message); }
+  });
+  $("m-save").addEventListener("click", async () => {
+    const payload = {
+      grade_label: $("m-grade").value,
+      grade_rank: parseInt($("m-grade").value.slice(1), 10),
+      result: selectedResult,
+      attempts: Math.max(1, parseInt($("m-attempts").value, 10) || 1),
+      tags: Array.from(selectedTags),
+      notes: $("m-notes").value || null,
+      route_ref: $("m-route").value || null,
+    };
+    try {
+      const { data, error } = await sb.from("climbs").update(payload).eq("id", climb.id).select().single();
+      if (error) throw error;
+      data.media = climb.media || [];
+      closeModal();
+      onSaved(data);
+      showToast("Climb updated");
+    } catch (err) { showToast("Couldn’t save: " + err.message); }
+  });
+}
+
+function openExerciseEditModal(ex, { onSaved, onDeleted }) {
+  openModal(`
+    <h3>Edit Exercise</h3>
+    <div class="field"><label>Exercise</label><input type="text" id="m-name" value="${escapeHtml(ex.exercise_name)}"></div>
+    <div class="field">
+      <label>Category</label>
+      <div class="chip-group" id="m-category">${EXERCISE_CATEGORIES.map((c) => `<button type="button" class="chip ${c === ex.category ? "selected" : ""}" data-category="${c}">${CATEGORY_LABELS[c]}</button>`).join("")}</div>
+    </div>
+    <div class="field-row">
+      <input type="number" min="0" id="m-sets" value="${ex.sets ?? ""}" placeholder="Sets">
+      <input type="number" min="0" id="m-reps" value="${ex.reps ?? ""}" placeholder="Reps">
+      <input type="number" min="0" step="0.5" id="m-weight" value="${ex.weight_kg ?? ""}" placeholder="+kg">
+    </div>
+    <label class="checkbox-row"><input type="checkbox" id="m-bodyweight" ${ex.is_bodyweight ? "checked" : ""}> Body weight only</label>
+    <div class="field"><textarea id="m-notes" placeholder="Notes">${escapeHtml(ex.notes || "")}</textarea></div>
+    <button class="btn btn-primary" id="m-save">Save</button>
+    <div class="finish-block"><button class="btn-danger-text" id="m-delete">Delete exercise</button></div>
+    <div class="finish-block"><button class="btn-danger-text" id="m-cancel" style="color:var(--ink-faint);">Cancel</button></div>
+  `);
+  let selectedCategory = ex.category;
+  $("m-category").querySelectorAll(".chip").forEach((chip) =>
+    chip.addEventListener("click", () => {
+      selectedCategory = chip.dataset.category;
+      $("m-category").querySelectorAll(".chip").forEach((c) => c.classList.toggle("selected", c === chip));
+    })
+  );
+  $("m-cancel").addEventListener("click", closeModal);
+  $("m-delete").addEventListener("click", async () => {
+    if (!confirm("Delete this exercise?")) return;
+    try {
+      await sb.from("strength_exercises").delete().eq("id", ex.id);
+      closeModal();
+      onDeleted(ex.id);
+      showToast("Exercise deleted");
+    } catch (err) { showToast("Couldn’t delete: " + err.message); }
+  });
+  $("m-save").addEventListener("click", async () => {
+    const payload = {
+      exercise_name: $("m-name").value.trim(),
+      category: selectedCategory,
+      sets: numOrNull($("m-sets").value),
+      reps: numOrNull($("m-reps").value),
+      weight_kg: numOrNull($("m-weight").value, true),
+      is_bodyweight: $("m-bodyweight").checked,
+      notes: $("m-notes").value.trim() || null,
+    };
+    if (!payload.exercise_name) { showToast("Enter an exercise name"); return; }
+    try {
+      const { data, error } = await sb.from("strength_exercises").update(payload).eq("id", ex.id).select().single();
+      if (error) throw error;
+      closeModal();
+      onSaved(data);
+      showToast("Exercise updated");
+    } catch (err) { showToast("Couldn’t save: " + err.message); }
+  });
 }
 
 // ---- climb ops ----
@@ -1085,10 +1693,15 @@ async function logClimb() {
 }
 
 async function deleteClimb(id) {
+  const climb = state.climbs.find((c) => c.id === id);
   state.climbs = state.climbs.filter((c) => c.id !== id);
   render();
   if (!id.startsWith("local-")) {
-    try { await sb.from("climbs").delete().eq("id", id); } catch (err) { showToast("Couldn’t delete on server"); }
+    try {
+      const media = climb?.media || [];
+      if (media.length) await sb.storage.from("media").remove(media.map((m) => m.storage_path));
+      await sb.from("climbs").delete().eq("id", id);
+    } catch (err) { showToast("Couldn’t delete on server"); }
   }
 }
 
@@ -1323,6 +1936,7 @@ async function finishSession() {
   state.climbs = [];
   state.exercises = [];
   state.startType = "climbing";
+  historyState.sessions = null;
   render();
 }
 
@@ -1337,6 +1951,7 @@ async function boot() {
   currentUser = session.user;
   setStatus("ok", "connected");
   await loadTodaySession();
+  checkAdminStatus();
   render();
 }
 

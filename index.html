@@ -1,0 +1,737 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Send Log">
+<title>Send Log</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800;900&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.113.0/dist/umd/supabase.js"></script>
+<style>
+  :root {
+    --bg: #e7e9e1;
+    --surface: #f6f7f1;
+    --surface-raised: #ffffff;
+    --border: #cdd0c4;
+    --ink: #1d2220;
+    --ink-dim: #5c655c;
+    --ink-faint: #8b9288;
+    --accent: #1f5c82;
+    --accent-ink: #f2f8fb;
+    --accent-dim: #d7e6ee;
+    --flash: #a3720f;
+    --flash-bg: #f3e6c8;
+    --send: #2f7a4f;
+    --send-bg: #dcebe0;
+    --attempt-bg: #e2e4da;
+    --danger: #a33a2e;
+    --shadow: 0 1px 2px rgba(29,34,32,.08), 0 4px 14px rgba(29,34,32,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141817;
+      --surface: #1c211f;
+      --surface-raised: #232926;
+      --border: #343c38;
+      --ink: #edefe8;
+      --ink-dim: #a3aca2;
+      --ink-faint: #6d766c;
+      --accent: #5ea3cf;
+      --accent-ink: #0d1d24;
+      --accent-dim: #26404d;
+      --flash: #e0b354;
+      --flash-bg: #3a3120;
+      --send: #7fc297;
+      --send-bg: #223328;
+      --attempt-bg: #2a2f2b;
+      --danger: #e08a76;
+      --shadow: 0 1px 2px rgba(0,0,0,.35), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141817;
+    --surface: #1c211f;
+    --surface-raised: #232926;
+    --border: #343c38;
+    --ink: #edefe8;
+    --ink-dim: #a3aca2;
+    --ink-faint: #6d766c;
+    --accent: #5ea3cf;
+    --accent-ink: #0d1d24;
+    --accent-dim: #26404d;
+    --flash: #e0b354;
+    --flash-bg: #3a3120;
+    --send: #7fc297;
+    --send-bg: #223328;
+    --attempt-bg: #2a2f2b;
+    --danger: #e08a76;
+    --shadow: 0 1px 2px rgba(0,0,0,.35), 0 4px 16px rgba(0,0,0,.3);
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { background: var(--bg); }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding-bottom: 48px;
+  }
+  .wrap { max-width: 480px; margin: 0 auto; }
+
+  header {
+    background: var(--accent);
+    color: var(--accent-ink);
+    padding: 18px 20px 16px;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    box-shadow: var(--shadow);
+  }
+  .brand-row { display: flex; align-items: baseline; justify-content: space-between; }
+  h1 {
+    margin: 0;
+    font-family: "Big Shoulders Display", sans-serif;
+    font-weight: 900;
+    font-size: 30px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    text-wrap: balance;
+  }
+  .tagline { margin: 2px 0 0; font-size: 12.5px; color: var(--accent-ink); opacity: .78; }
+  .status-dot { display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-family: "IBM Plex Mono", monospace; opacity: .9; }
+  .status-dot .dot { width: 8px; height: 8px; border-radius: 50%; background: #8fd18f; }
+  .status-dot.saving .dot { background: #e0c25a; }
+  .status-dot.offline .dot { background: #e08a76; }
+
+  main { padding: 16px 16px 8px; }
+
+  .card {
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px;
+    box-shadow: var(--shadow);
+    margin-bottom: 14px;
+  }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--ink-faint);
+    margin: 0 0 6px;
+  }
+
+  .start-title { font-family: "Big Shoulders Display", sans-serif; font-weight: 800; font-size: 24px; margin: 0 0 4px; text-wrap: balance; }
+  .start-sub { font-size: 13px; color: var(--ink-dim); margin: 0 0 14px; }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+  .field label { font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-dim); }
+  input[type="text"], input[type="number"], input[type="email"], input[type="password"], textarea {
+    font-family: inherit; font-size: 16px; padding: 11px 12px;
+    border-radius: 9px; border: 1px solid var(--border); background: var(--surface); color: var(--ink);
+    width: 100%;
+  }
+  input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  textarea { resize: vertical; min-height: 54px; }
+
+  .btn {
+    font-family: "IBM Plex Sans", sans-serif;
+    font-weight: 600;
+    font-size: 15px;
+    padding: 14px 18px;
+    border-radius: 11px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--ink);
+    cursor: pointer;
+    width: 100%;
+  }
+  .btn:active { transform: scale(.98); }
+  .btn:disabled { opacity: .5; }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-size: 16px; }
+  .btn-secondary { background: transparent; border-color: var(--border); color: var(--ink-dim); font-size: 13px; padding: 10px 14px; }
+  .btn-danger-text { background: none; border: none; color: var(--danger); font-size: 13px; font-weight: 600; padding: 8px; }
+  .form-error { color: var(--danger); font-size: 13px; margin: -4px 0 10px; }
+
+  .session-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .session-bar-left { display: flex; flex-direction: column; }
+  .session-bar-title { font-family: "Big Shoulders Display", sans-serif; font-weight: 800; font-size: 20px; }
+  .session-bar-meta { font-size: 12px; color: var(--ink-dim); font-family: "IBM Plex Mono", monospace; }
+
+  .grade-strip { display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 10px; scrollbar-width: none; }
+  .grade-strip::-webkit-scrollbar { display: none; }
+  .grade-chip {
+    flex: 0 0 auto; min-width: 56px; height: 56px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Big Shoulders Display", sans-serif; font-weight: 800; font-size: 20px;
+    border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--ink);
+  }
+  .grade-chip.selected { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+
+  .segmented { display: flex; gap: 8px; margin-bottom: 12px; }
+  .segmented button {
+    flex: 1; padding: 12px 6px; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--ink); font-weight: 600; font-size: 14px;
+  }
+  .segmented button.active.flash { background: var(--flash-bg); border-color: var(--flash); color: var(--flash); }
+  .segmented button.active.send { background: var(--send-bg); border-color: var(--send); color: var(--send); }
+  .segmented button.active.attempt { background: var(--attempt-bg); border-color: var(--ink-faint); color: var(--ink); }
+
+  .stepper { display: flex; align-items: center; gap: 12px; }
+  .stepper button {
+    width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--ink); font-size: 18px; font-weight: 700;
+  }
+  .stepper .count { font-family: "IBM Plex Mono", monospace; font-size: 17px; min-width: 24px; text-align: center; }
+
+  .chip-group { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }
+  .chip {
+    padding: 8px 13px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--ink-dim); font-size: 13px;
+  }
+  .chip.selected { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+  .chip-add-row { display: flex; gap: 8px; margin-bottom: 14px; }
+  .chip-add-row input { flex: 1; font-size: 14px; padding: 8px 10px; }
+  .chip-add-row button { flex: 0 0 auto; padding: 8px 14px; font-size: 13px; }
+
+  .note-toggle { background: none; border: none; color: var(--accent); font-size: 13px; font-weight: 600; padding: 4px 0 14px; }
+
+  .log-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 4px; border-bottom: 1px solid var(--border); }
+  .log-row:last-child { border-bottom: none; }
+  .log-grade { font-family: "Big Shoulders Display", sans-serif; font-weight: 800; font-size: 22px; min-width: 44px; }
+  .log-main { flex: 1; min-width: 0; }
+  .log-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .badge { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 2px 8px; border-radius: 999px; }
+  .badge.flash { background: var(--flash-bg); color: var(--flash); }
+  .badge.send { background: var(--send-bg); color: var(--send); }
+  .badge.attempt { background: var(--attempt-bg); color: var(--ink-dim); }
+  .badge.pending { background: var(--attempt-bg); color: var(--danger); }
+  .log-tags { font-size: 12px; color: var(--ink-dim); margin-top: 2px; }
+  .log-time { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--ink-faint); flex-shrink: 0; }
+  .log-del { background: none; border: none; color: var(--ink-faint); font-size: 18px; padding: 4px 6px; flex-shrink: 0; }
+  .log-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+
+  .media-row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .media-thumb { width: 52px; height: 52px; border-radius: 8px; object-fit: cover; border: 1px solid var(--border); }
+  .media-video-badge { width: 52px; height: 52px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); display: flex; align-items: center; justify-content: center; font-size: 20px; }
+  .media-add-btn { background: none; border: 1px dashed var(--border); border-radius: 8px; color: var(--ink-faint); font-size: 18px; padding: 4px 8px; }
+
+  .empty-hint { color: var(--ink-dim); font-size: 13.5px; text-align: center; padding: 18px 8px; }
+
+  .banner {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: var(--flash-bg); color: var(--flash); border-radius: 10px; padding: 10px 14px;
+    font-size: 13px; font-weight: 600; margin-bottom: 14px;
+  }
+  .banner button { background: none; border: 1px solid currentColor; color: inherit; border-radius: 7px; padding: 5px 10px; font-size: 12px; font-weight: 700; }
+
+  .finish-block { text-align: center; margin-top: 4px; }
+  .signout-row { text-align: center; margin-top: 18px; }
+  .signout-row button { background: none; border: none; color: var(--ink-faint); font-size: 12px; text-decoration: underline; }
+
+  .toast {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    background: var(--ink); color: var(--bg); padding: 10px 18px; border-radius: 9px;
+    font-size: 13px; font-weight: 600; box-shadow: var(--shadow); z-index: 50; max-width: 90%; text-align: center;
+  }
+
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand-row">
+      <div>
+        <h1>Send Log</h1>
+        <p class="tagline">quick climb capture &middot; synced to your account</p>
+      </div>
+      <div class="status-dot" id="status-dot"><span class="dot"></span><span id="status-text">ready</span></div>
+    </div>
+  </header>
+
+  <main id="main">
+    <p class="empty-hint">Loading…</p>
+  </main>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script>
+const SUPABASE_URL = "https://dretbtasvtzyrzovdczs.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_vuI6ldmESFAxu5D6lMr-8g_cqrBMG5l";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const TAG_PRESETS = ["crimps","slopers","pinches","pockets","dynos","overhangs","slab","footwork","mantles","compression","coordination","heel_hook","toe_hook"];
+const GRADES = Array.from({length: 18}, (_, i) => "V" + i);
+
+let currentUser = null;
+let state = {
+  session: null,
+  climbs: [],
+  draft: { grade: "V4", result: null, attempts: 1, tags: new Set(), notes: "" },
+  customTags: [],
+};
+
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
+function todayIso() { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
+function timeLabel(iso) { const d = new Date(iso); return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }); }
+function showToast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => { t.hidden = true; }, 2800);
+}
+function setStatus(mode, text) {
+  const el = $("status-dot");
+  el.className = "status-dot" + (mode === "saving" ? " saving" : mode === "offline" ? " offline" : "");
+  $("status-text").textContent = text;
+}
+
+// ---------------------------------------------------------------- auth ---
+function renderAuthCard(errorMsg) {
+  $("main").innerHTML = `
+    <div class="card">
+      <p class="eyebrow">Welcome</p>
+      <h2 class="start-title">Sign in to Send Log</h2>
+      <p class="start-sub">First time? Just enter an email and a password you'll remember — it creates your account.</p>
+      ${errorMsg ? `<p class="form-error">${escapeHtml(errorMsg)}</p>` : ""}
+      <div class="field"><label>Email</label><input type="email" id="a-email" autocomplete="email"></div>
+      <div class="field"><label>Password</label><input type="password" id="a-password" autocomplete="current-password"></div>
+      <button class="btn btn-primary" id="a-continue">Continue</button>
+    </div>
+  `;
+  $("a-continue").addEventListener("click", handleAuth);
+}
+
+async function handleAuth() {
+  const email = $("a-email").value.trim();
+  const password = $("a-password").value;
+  if (!email || !password) { renderAuthCard("Enter an email and password."); return; }
+  const btn = $("a-continue");
+  btn.disabled = true;
+  try {
+    let { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) {
+      const signUp = await sb.auth.signUp({ email, password });
+      if (signUp.error) throw signUp.error;
+      data = signUp.data;
+    }
+    currentUser = data.user;
+    await loadTodaySession();
+    render();
+  } catch (err) {
+    renderAuthCard(err.message || "Couldn't sign in.");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// -------------------------------------------------------------- render ---
+function render() {
+  const main = $("main");
+  if (!state.session) {
+    main.innerHTML = renderStartCard();
+    wireStartCard();
+  } else {
+    main.innerHTML = renderSessionCard() + renderLogCard();
+    wireSessionCard();
+    wireLogCard();
+  }
+}
+
+function renderStartCard() {
+  return `
+    <div class="card">
+      <p class="eyebrow">${escapeHtml(todayIso())}</p>
+      <h2 class="start-title">Start a session</h2>
+      <p class="start-sub">One tap. Add details after if you want them.</p>
+      <div class="field">
+        <label>Gym / location (optional)</label>
+        <input type="text" id="s-location" placeholder="e.g. The Cave">
+      </div>
+      <button class="btn btn-primary" id="s-start">Start Climbing Session</button>
+    </div>
+    <div class="signout-row"><button id="sign-out-btn">Sign out</button></div>
+  `;
+}
+
+function wireStartCard() {
+  $("s-start").addEventListener("click", startSession);
+  $("sign-out-btn").addEventListener("click", signOut);
+}
+
+function renderSessionCard() {
+  const s = state.session;
+  return `
+    <div class="card">
+      <div class="session-bar">
+        <div class="session-bar-left">
+          <span class="session-bar-title">${escapeHtml(s.location || "Today’s session")}</span>
+          <span class="session-bar-meta">started ${timeLabel(s.created_at)}</span>
+        </div>
+        <button class="btn-secondary btn" id="finish-btn" style="width:auto;">Finish</button>
+      </div>
+    </div>
+  `;
+}
+
+function wireSessionCard() {
+  $("finish-btn").addEventListener("click", openFinishSheet);
+}
+
+function renderLogCard() {
+  const draft = state.draft;
+  const gradeChips = GRADES.map((g) => `<button type="button" class="grade-chip ${g === draft.grade ? "selected" : ""}" data-grade="${g}">${g}</button>`).join("");
+  const allTags = TAG_PRESETS.concat(state.customTags.filter((t) => !TAG_PRESETS.includes(t)));
+  const tagChips = allTags.map((t) => `<button type="button" class="chip ${draft.tags.has(t) ? "selected" : ""}" data-tag="${t}">${t.replace(/_/g, " ")}</button>`).join("");
+  const pendingCount = state.climbs.filter((c) => c._pending).length;
+
+  const rows = state.climbs.length
+    ? state.climbs.map((c) => `
+      <div class="log-row" data-id="${c.id}">
+        <div class="log-grade">${c.grade_label}</div>
+        <div class="log-main">
+          <div class="log-badges">
+            <span class="badge ${c._pending ? "pending" : c.result}">${c._pending ? "saving…" : c.result}</span>
+            ${c.attempts > 1 ? `<span class="log-tags">${c.attempts} attempts</span>` : ""}
+          </div>
+          ${c.tags && c.tags.length ? `<div class="log-tags">${c.tags.map((t) => t.replace(/_/g, " ")).join(", ")}</div>` : ""}
+          <div class="media-row" id="media-${c.id}">${renderMediaThumbs(c)}${c._pending ? "" : `<button class="media-add-btn" data-media-add="${c.id}">+</button>`}</div>
+        </div>
+        <div class="log-actions">
+          <div class="log-time">${timeLabel(c.created_at)}</div>
+          <button class="log-del" data-del="${c.id}" aria-label="Delete">&times;</button>
+        </div>
+      </div>
+    `).join("")
+    : `<p class="empty-hint">No climbs logged yet — add your first below.</p>`;
+
+  return `
+    ${pendingCount ? `<div class="banner"><span>${pendingCount} climb${pendingCount > 1 ? "s" : ""} waiting to save</span><button id="retry-pending">Retry</button></div>` : ""}
+    <div class="card">
+      <p class="eyebrow">Grade</p>
+      <div class="grade-strip" id="grade-strip">${gradeChips}</div>
+
+      <p class="eyebrow">Result</p>
+      <div class="segmented" id="result-seg">
+        <button type="button" data-value="flash" class="${draft.result === "flash" ? "active flash" : ""}">Flash</button>
+        <button type="button" data-value="send" class="${draft.result === "send" ? "active send" : ""}">Send</button>
+        <button type="button" data-value="attempt" class="${draft.result === "attempt" ? "active attempt" : ""}">Attempt</button>
+      </div>
+
+      <p class="eyebrow">Attempts</p>
+      <div class="stepper" style="margin-bottom:16px;">
+        <button type="button" id="att-minus">&minus;</button>
+        <span class="count" id="att-count">${draft.attempts}</span>
+        <button type="button" id="att-plus">+</button>
+      </div>
+
+      <p class="eyebrow">Tags</p>
+      <div class="chip-group" id="tag-group">${tagChips}</div>
+      <div class="chip-add-row">
+        <input type="text" id="tag-new" placeholder="Add custom tag…">
+        <button type="button" class="btn btn-secondary" id="tag-add" style="width:auto;">+</button>
+      </div>
+
+      <button type="button" class="note-toggle" id="note-toggle">+ add a note</button>
+      <div class="field" id="note-field" hidden>
+        <textarea id="c-notes" placeholder="Beta, crux move, etc."></textarea>
+      </div>
+
+      <button class="btn btn-primary" id="log-climb-btn">Log Climb</button>
+    </div>
+
+    <div class="card">
+      <p class="eyebrow">This session</p>
+      ${rows}
+    </div>
+  `;
+}
+
+function renderMediaThumbs(climb) {
+  if (!climb.media || !climb.media.length) return "";
+  return climb.media.map((m) =>
+    m.media_type === "image"
+      ? `<img class="media-thumb" src="${m._url || ""}" data-media-id="${m.id}">`
+      : `<div class="media-video-badge" data-media-id="${m.id}">🎥</div>`
+  ).join("");
+}
+
+function wireLogCard() {
+  $("grade-strip").querySelectorAll(".grade-chip").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      state.draft.grade = btn.dataset.grade;
+      $("grade-strip").querySelectorAll(".grade-chip").forEach((b) => b.classList.toggle("selected", b === btn));
+    })
+  );
+  $("result-seg").querySelectorAll("button").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      state.draft.result = btn.dataset.value;
+      $("result-seg").querySelectorAll("button").forEach((b) => b.className = "");
+      btn.className = "active " + btn.dataset.value;
+      if (btn.dataset.value === "flash") {
+        state.draft.attempts = 1;
+        $("att-count").textContent = 1;
+      }
+    })
+  );
+  $("att-minus").addEventListener("click", () => {
+    if (state.draft.result === "flash") return;
+    state.draft.attempts = Math.max(1, state.draft.attempts - 1);
+    $("att-count").textContent = state.draft.attempts;
+  });
+  $("att-plus").addEventListener("click", () => {
+    if (state.draft.result === "flash") return;
+    state.draft.attempts += 1;
+    $("att-count").textContent = state.draft.attempts;
+  });
+  $("tag-group").querySelectorAll(".chip").forEach((chip) =>
+    chip.addEventListener("click", () => {
+      const t = chip.dataset.tag;
+      if (state.draft.tags.has(t)) { state.draft.tags.delete(t); chip.classList.remove("selected"); }
+      else { state.draft.tags.add(t); chip.classList.add("selected"); }
+    })
+  );
+  $("tag-add").addEventListener("click", () => {
+    const input = $("tag-new");
+    const name = input.value.trim().toLowerCase().replace(/\s+/g, "_");
+    if (!name) return;
+    if (!state.customTags.includes(name) && !TAG_PRESETS.includes(name)) state.customTags.push(name);
+    state.draft.tags.add(name);
+    input.value = "";
+    render();
+  });
+  $("note-toggle").addEventListener("click", () => {
+    $("note-field").hidden = false;
+    $("note-toggle").hidden = true;
+    $("c-notes").focus();
+  });
+  $("c-notes")?.addEventListener("input", (e) => { state.draft.notes = e.target.value; });
+  $("log-climb-btn").addEventListener("click", logClimb);
+  const retryBtn = $("retry-pending");
+  if (retryBtn) retryBtn.addEventListener("click", retryPending);
+  document.querySelectorAll("[data-del]").forEach((btn) => btn.addEventListener("click", () => deleteClimb(btn.dataset.del)));
+  document.querySelectorAll("[data-media-add]").forEach((btn) => btn.addEventListener("click", () => pickAndUploadMedia(btn.dataset.mediaAdd)));
+}
+
+// ---- session ops ----
+async function loadTodaySession() {
+  const { data: sessions, error } = await sb.from("sessions").select("*").eq("date", todayIso()).eq("active", true).limit(1);
+  if (error) { showToast("Couldn't load today's session"); return; }
+  if (!sessions.length) { state.session = null; state.climbs = []; return; }
+  state.session = sessions[0];
+  const { data: climbs } = await sb.from("climbs").select("*").eq("session_id", state.session.id).order("created_at", { ascending: false });
+  state.climbs = climbs || [];
+  if (state.climbs.length) await attachMediaToClimbs();
+}
+
+async function attachMediaToClimbs() {
+  const ids = state.climbs.map((c) => c.id);
+  const { data: mediaRows } = await sb.from("media").select("*").in("climb_id", ids);
+  if (!mediaRows) return;
+  for (const climb of state.climbs) {
+    climb.media = mediaRows.filter((m) => m.climb_id === climb.id);
+    for (const m of climb.media) m._url = await signedUrl(m.storage_path);
+  }
+}
+
+async function signedUrl(path) {
+  try {
+    const { data } = await sb.storage.from("media").createSignedUrl(path, 3600);
+    return data?.signedUrl || "";
+  } catch (e) { return ""; }
+}
+
+async function startSession() {
+  const btn = $("s-start");
+  btn.disabled = true;
+  const body = {
+    date: todayIso(),
+    session_type: "climbing",
+    location: $("s-location").value.trim() || null,
+    active: true,
+  };
+  try {
+    const { data, error } = await sb.from("sessions").insert(body).select().single();
+    if (error) throw error;
+    state.session = data;
+    state.climbs = [];
+    render();
+  } catch (err) {
+    showToast("Couldn’t start session: " + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function signOut() {
+  sb.auth.signOut();
+  currentUser = null;
+  state = { session: null, climbs: [], draft: { grade: "V4", result: null, attempts: 1, tags: new Set(), notes: "" }, customTags: [] };
+  renderAuthCard();
+}
+
+// ---- climb ops ----
+async function logClimb() {
+  const draft = state.draft;
+  if (!draft.result) { showToast("Pick flash / send / attempt"); return; }
+  const localId = "local-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
+  const body = {
+    session_id: state.session.id,
+    grade_label: draft.grade,
+    grade_rank: parseInt(draft.grade.slice(1), 10),
+    result: draft.result,
+    attempts: draft.attempts,
+    tags: Array.from(draft.tags),
+    notes: draft.notes || null,
+  };
+  const optimistic = { id: localId, ...body, created_at: new Date().toISOString(), media: [], _pending: true };
+  state.climbs.unshift(optimistic);
+  state.draft = { grade: draft.grade, result: null, attempts: 1, tags: new Set(), notes: "" };
+  render();
+  setStatus("saving", "saving…");
+  try {
+    const { data, error } = await sb.from("climbs").insert(body).select().single();
+    if (error) throw error;
+    const item = state.climbs.find((c) => c.id === localId);
+    if (item) { Object.assign(item, data); item._pending = false; item.media = []; }
+    setStatus("ok", "saved");
+    render();
+  } catch (err) {
+    setStatus("offline", "will retry");
+    showToast("Couldn’t save — tap Retry when back online");
+  }
+}
+
+async function retryPending() {
+  const pending = state.climbs.filter((c) => c._pending);
+  if (!pending.length) return;
+  setStatus("saving", "syncing…");
+  for (const item of pending) {
+    try {
+      const localId = item.id;
+      const { id, _pending, media, created_at, ...body } = item;
+      const { data, error } = await sb.from("climbs").insert(body).select().single();
+      if (error) throw error;
+      Object.assign(item, data);
+      item._pending = false;
+      item.media = [];
+    } catch (err) { /* still offline */ }
+  }
+  const stillPending = state.climbs.some((c) => c._pending);
+  setStatus(stillPending ? "offline" : "ok", stillPending ? "will retry" : "saved");
+  render();
+}
+
+async function deleteClimb(id) {
+  state.climbs = state.climbs.filter((c) => c.id !== id);
+  render();
+  if (!id.startsWith("local-")) {
+    try { await sb.from("climbs").delete().eq("id", id); } catch (err) { showToast("Couldn’t delete on server"); }
+  }
+}
+
+// ---- media ops ----
+function pickAndUploadMedia(climbId) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*,video/*";
+  input.capture = "environment";
+  input.onchange = () => {
+    if (input.files && input.files[0]) uploadMedia(climbId, input.files[0]);
+  };
+  input.click();
+}
+
+async function uploadMedia(climbId, file) {
+  if (!currentUser) return;
+  setStatus("saving", "uploading…");
+  const mediaType = file.type.startsWith("video/") ? "video" : "image";
+  const ext = (file.name.split(".").pop() || (mediaType === "video" ? "mp4" : "jpg")).toLowerCase();
+  const path = `${currentUser.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  try {
+    const { error: uploadErr } = await sb.storage.from("media").upload(path, file);
+    if (uploadErr) throw uploadErr;
+    const { data, error } = await sb.from("media").insert({
+      climb_id: climbId, storage_path: path, media_type: mediaType, original_filename: file.name,
+    }).select().single();
+    if (error) throw error;
+    data._url = mediaType === "image" ? await signedUrl(path) : "";
+    const climb = state.climbs.find((c) => c.id === climbId);
+    if (climb) { climb.media = (climb.media || []).concat(data); }
+    setStatus("ok", "saved");
+    render();
+    showToast("Media attached");
+  } catch (err) {
+    setStatus("ok", "saved");
+    showToast("Couldn’t upload: " + err.message);
+  }
+}
+
+// ---- finish session ----
+function openFinishSheet() {
+  const elapsedMs = Date.now() - new Date(state.session.created_at).getTime();
+  const suggestedMin = Math.max(5, Math.round(elapsedMs / 60000 / 5) * 5);
+  const html = `
+    <div class="card" id="finish-card">
+      <p class="eyebrow">Wrap up</p>
+      <h2 class="start-title">Finish session</h2>
+      <div class="field"><label>Duration (min)</label><input type="number" id="f-duration" value="${suggestedMin}"></div>
+      <div class="field"><label>RPE / fatigue (1-10)</label><input type="number" id="f-rpe" min="1" max="10" value="6"></div>
+      <div class="field"><label>Notes (optional)</label><textarea id="f-notes" placeholder="How did it feel?"></textarea></div>
+      <button class="btn btn-primary" id="f-save">Save &amp; Finish</button>
+      <div class="finish-block"><button class="btn-danger-text" id="f-cancel">Keep logging instead</button></div>
+    </div>
+  `;
+  $("main").insertAdjacentHTML("beforeend", html);
+  $("f-cancel").addEventListener("click", () => $("finish-card").remove());
+  $("f-save").addEventListener("click", finishSession);
+}
+
+async function finishSession() {
+  const body = {
+    active: false,
+    duration_minutes: parseInt($("f-duration").value, 10) || null,
+    rpe: parseInt($("f-rpe").value, 10) || null,
+    notes: $("f-notes").value.trim() || null,
+    ended_at: new Date().toISOString(),
+  };
+  try {
+    await sb.from("sessions").update(body).eq("id", state.session.id);
+    showToast("Session saved — nice work");
+  } catch (err) {
+    showToast("Couldn’t save finish details");
+  }
+  state.session = null;
+  state.climbs = [];
+  render();
+}
+
+// ---------------------------------------------------------------- boot ---
+async function boot() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) {
+    renderAuthCard();
+    setStatus("offline", "signed out");
+    return;
+  }
+  currentUser = session.user;
+  setStatus("ok", "connected");
+  await loadTodaySession();
+  render();
+}
+
+boot();
+</script>
+</body>
+</html>

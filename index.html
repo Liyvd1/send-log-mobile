@@ -245,6 +245,42 @@
     font-size: 13px; font-weight: 600; box-shadow: var(--shadow); z-index: 50; max-width: 90%; text-align: center;
   }
 
+  .tab-row { display: flex; gap: 6px; margin-top: 12px; }
+  .tab-btn {
+    flex: 1; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.22);
+    color: var(--accent-ink); font-weight: 600; font-size: 13px; padding: 8px 0; border-radius: 9px;
+  }
+  .tab-btn.active { background: var(--accent-ink); color: var(--accent); border-color: var(--accent-ink); }
+
+  /* stats view */
+  .kpi-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 14px; }
+  .kpi-tile { background: var(--surface-raised); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; box-shadow: var(--shadow); }
+  .kpi-label { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); }
+  .kpi-value { font-family: "Big Shoulders Display", sans-serif; font-weight: 800; font-size: 26px; margin-top: 2px; }
+  .kpi-value .kpi-unit { font-size: 14px; color: var(--ink-dim); margin-left: 2px; }
+
+  .chart-legend { display: flex; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  .chart-legend-item { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-dim); }
+  .chart-legend-swatch { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
+
+  .hbar-rows { display: flex; flex-direction: column; gap: 7px; }
+  .hbar-row { display: grid; grid-template-columns: 40px 1fr auto; align-items: center; gap: 8px; }
+  .hbar-row.wide-label { grid-template-columns: 108px 1fr auto; }
+  .hbar-row-label { font-size: 12px; font-weight: 600; color: var(--ink-dim); text-align: right; }
+  .hbar-row.wide-label .hbar-row-label { text-align: left; text-transform: capitalize; }
+  .hbar-track { display: flex; height: 18px; border-radius: 0 4px 4px 0; overflow: hidden; background: var(--surface); }
+  .hbar-seg { height: 100%; min-width: 3px; }
+  .hbar-seg + .hbar-seg { border-left: 2px solid var(--surface-raised); }
+  .hbar-row-value { font-size: 11.5px; color: var(--ink-dim); font-weight: 600; min-width: 18px; }
+
+  .line-chart { display: block; width: 100%; height: auto; }
+  .line-chart .grid-line { stroke: var(--border); stroke-width: 1; }
+  .line-chart .chart-area { fill: var(--accent); opacity: .12; }
+  .line-chart .chart-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .line-chart .chart-dot { fill: var(--accent); stroke: var(--surface-raised); stroke-width: 2; }
+  .line-chart .chart-axis-label { fill: var(--ink-dim); font-size: 10px; }
+  .line-chart .chart-end-label { fill: var(--ink); font-size: 11.5px; font-weight: 700; }
+
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -257,6 +293,10 @@
         <p class="tagline">quick climb &amp; strength capture &middot; synced to your account</p>
       </div>
       <div class="status-dot" id="status-dot"><span class="dot"></span><span id="status-text">ready</span></div>
+    </div>
+    <div class="tab-row" id="tab-row" hidden>
+      <button type="button" class="tab-btn active" data-tab="log">Log</button>
+      <button type="button" class="tab-btn" data-tab="stats">Stats</button>
     </div>
   </header>
 
@@ -288,6 +328,10 @@ const COMMON_EXERCISE_NAMES = [
   "Wrist curls / extensions", "Shoulder external rotation", "Hip flexor / hamstring stretch",
 ];
 
+const RESULT_COLORS = { flash: "var(--flash)", send: "var(--send)", attempt: "var(--ink-faint)" };
+const RESULT_ORDER = ["flash", "send", "attempt"];
+const RESULT_LABELS = { flash: "Flash", send: "Send", attempt: "Attempt" };
+
 let currentUser = null;
 let state = {
   session: null,
@@ -297,12 +341,23 @@ let state = {
   exerciseDraft: { category: "" },
   customTags: [],
   startType: "climbing",
+  tab: "log",
 };
 
 function $(id) { return document.getElementById(id); }
 function escapeHtml(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
 function todayIso() { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
 function timeLabel(iso) { const d = new Date(iso); return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }); }
+function formatDateShort(iso) {
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+function formatDateFull(iso) {
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
 function numOrNull(v, isFloat) {
   if (v === "" || v == null) return null;
   const n = isFloat ? parseFloat(v) : parseInt(v, 10);
@@ -361,8 +416,24 @@ async function handleAuth() {
 }
 
 // -------------------------------------------------------------- render ---
+function initTabs() {
+  $("tab-row").querySelectorAll(".tab-btn").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      if (state.tab === btn.dataset.tab) return;
+      state.tab = btn.dataset.tab;
+      render();
+    })
+  );
+}
+
 function render() {
+  $("tab-row").hidden = false;
+  $("tab-row").querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === state.tab));
   const main = $("main");
+  if (state.tab === "stats") {
+    renderStatsView();
+    return;
+  }
   if (!state.session) {
     main.innerHTML = renderStartCard();
     wireStartCard();
@@ -647,6 +718,177 @@ function wireExerciseSection() {
   document.querySelectorAll("[data-del-ex]").forEach((btn) => btn.addEventListener("click", () => deleteExercise(btn.dataset.delEx)));
 }
 
+// --------------------------------------------------------------- stats ---
+// Mirrors app/analysis.py on the desktop side -- same aggregations, done
+// client-side here since this page talks to Supabase directly.
+
+function computeSummary(sessions, climbs) {
+  const total = climbs.length;
+  const sent = climbs.filter((c) => c.result === "flash" || c.result === "send");
+  const hardest = sent.length ? sent.reduce((a, b) => (a.grade_rank >= b.grade_rank ? a : b)).grade_label : null;
+  return {
+    total_sessions: sessions.length,
+    total_climbs: total,
+    hardest_grade: hardest,
+    send_rate: total ? Math.round((sent.length / total) * 1000) / 10 : null,
+  };
+}
+
+function computeGradePyramid(climbs) {
+  const byRank = {};
+  for (const c of climbs) {
+    const r = c.grade_rank;
+    if (!byRank[r]) byRank[r] = { grade_label: c.grade_label, grade_rank: r, flash: 0, send: 0, attempt: 0 };
+    byRank[r][c.result] += 1;
+  }
+  return Object.values(byRank).sort((a, b) => a.grade_rank - b.grade_rank);
+}
+
+function computeProgressOverTime(climbs) {
+  const byDate = {};
+  for (const c of climbs) {
+    if ((c.result === "flash" || c.result === "send") && c.session_date) {
+      byDate[c.session_date] = (byDate[c.session_date] || 0) + 1;
+    }
+  }
+  let running = 0;
+  return Object.keys(byDate).sort().map((date) => {
+    running += byDate[date];
+    return { date, cumulative_sends: running };
+  });
+}
+
+function computeTopTags(climbs, limit = 8) {
+  const counts = {};
+  for (const c of climbs) for (const t of c.tags || []) counts[t] = (counts[t] || 0) + 1;
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([name, count]) => ({ name, count }));
+}
+
+function computeStrengthVolume(exercises) {
+  const counts = {};
+  for (const e of exercises) counts[e.category] = (counts[e.category] || 0) + 1;
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([category, count]) => ({ category, count }));
+}
+
+function kpiTileHtml(label, value, unit) {
+  return `<div class="kpi-tile"><div class="kpi-label">${label}</div><div class="kpi-value">${value}${unit ? `<span class="kpi-unit">${unit}</span>` : ""}</div></div>`;
+}
+
+function gradePyramidHtml(rows) {
+  if (!rows.length) return `<p class="empty-hint">No climbs logged yet.</p>`;
+  const ordered = rows.slice().reverse(); // hardest grade on top
+  const maxTotal = Math.max(...ordered.map((r) => r.flash + r.send + r.attempt));
+  const legend = `<div class="chart-legend">${RESULT_ORDER.map(
+    (r) => `<div class="chart-legend-item"><span class="chart-legend-swatch" style="background:${RESULT_COLORS[r]}"></span>${RESULT_LABELS[r]}</div>`
+  ).join("")}</div>`;
+  const rowsHtml = ordered.map((r) => {
+    const total = r.flash + r.send + r.attempt;
+    const widthPct = maxTotal ? (total / maxTotal) * 100 : 0;
+    const segs = RESULT_ORDER.filter((k) => r[k] > 0)
+      .map((k) => `<div class="hbar-seg" style="width:${(r[k] / total) * 100}%;background:${RESULT_COLORS[k]}" title="${RESULT_LABELS[k]}: ${r[k]}"></div>`)
+      .join("");
+    return `<div class="hbar-row"><div class="hbar-row-label">${r.grade_label}</div><div class="hbar-track" style="width:${widthPct}%">${segs}</div><div class="hbar-row-value">${total}</div></div>`;
+  }).join("");
+  return `${legend}<div class="hbar-rows">${rowsHtml}</div>`;
+}
+
+function tagsChartHtml(rows) {
+  if (!rows.length) return `<p class="empty-hint">No technique tags logged yet.</p>`;
+  const max = Math.max(...rows.map((r) => r.count));
+  const rowsHtml = rows.map((r) => {
+    const label = r.name.replace(/_/g, " ");
+    return `<div class="hbar-row wide-label"><div class="hbar-row-label">${escapeHtml(label)}</div><div class="hbar-track" style="width:${(r.count / max) * 100}%"><div class="hbar-seg" style="width:100%;background:var(--accent)" title="${escapeHtml(label)}: ${r.count}"></div></div><div class="hbar-row-value">${r.count}</div></div>`;
+  }).join("");
+  return `<div class="hbar-rows">${rowsHtml}</div>`;
+}
+
+function strengthChartHtml(rows) {
+  if (!rows.length) return `<p class="empty-hint">No strength training logged yet.</p>`;
+  const max = Math.max(...rows.map((r) => r.count));
+  const rowsHtml = rows.map((r) => {
+    const label = CATEGORY_LABELS[r.category] || r.category;
+    return `<div class="hbar-row wide-label"><div class="hbar-row-label">${escapeHtml(label)}</div><div class="hbar-track" style="width:${(r.count / max) * 100}%"><div class="hbar-seg" style="width:100%;background:var(--accent)" title="${escapeHtml(label)}: ${r.count} logged"></div></div><div class="hbar-row-value">${r.count}</div></div>`;
+  }).join("");
+  return `<div class="hbar-rows">${rowsHtml}</div>`;
+}
+
+function progressChartHtml(rows) {
+  if (!rows.length) return `<p class="empty-hint">Log a flash or send to start your progress chart.</p>`;
+  const W = 340, H = 150, padL = 26, padR = 12, padT = 14, padB = 22;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const maxVal = Math.max(...rows.map((r) => r.cumulative_sends));
+  const n = rows.length;
+  const xAt = (i) => padL + (n === 1 ? innerW / 2 : (innerW * i) / (n - 1));
+  const yAt = (v) => padT + innerH - (maxVal ? (v / maxVal) * innerH : 0);
+  const points = rows.map((r, i) => [xAt(i), yAt(r.cumulative_sends)]);
+  const linePath = points.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const baseline = (padT + innerH).toFixed(1);
+  const areaPath = `${linePath} L${points[points.length - 1][0].toFixed(1)},${baseline} L${points[0][0].toFixed(1)},${baseline} Z`;
+  const dots = points
+    .map(([x, y], i) => `<circle class="chart-dot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4"><title>${formatDateFull(rows[i].date)}: ${rows[i].cumulative_sends} sends</title></circle>`)
+    .join("");
+  const last = points[points.length - 1];
+  const lastVal = rows[rows.length - 1].cumulative_sends;
+  return `
+    <svg class="line-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <line class="grid-line" x1="${padL}" y1="${padT}" x2="${W - padR}" y2="${padT}"></line>
+      <line class="grid-line" x1="${padL}" y1="${baseline}" x2="${W - padR}" y2="${baseline}"></line>
+      <text class="chart-axis-label" x="2" y="${padT + 4}">${maxVal}</text>
+      <text class="chart-axis-label" x="2" y="${baseline}">0</text>
+      ${points.length > 1 ? `<path class="chart-area" d="${areaPath}"></path><path class="chart-line" d="${linePath}"></path>` : ""}
+      ${dots}
+      <text class="chart-end-label" x="${Math.max(padL, last[0] - 8).toFixed(1)}" y="${Math.max(padT + 10, last[1] - 8).toFixed(1)}" text-anchor="end">${lastVal}</text>
+      <text class="chart-axis-label" x="${padL}" y="${H - 6}">${formatDateShort(rows[0].date)}</text>
+      <text class="chart-axis-label" x="${W - padR}" y="${H - 6}" text-anchor="end">${formatDateShort(rows[rows.length - 1].date)}</text>
+    </svg>`;
+}
+
+function buildStatsHtml(rawSessions, rawClimbs, rawExercises) {
+  const dateBySession = Object.fromEntries(rawSessions.map((s) => [s.id, s.date]));
+  const climbs = rawClimbs.map((c) => ({ ...c, session_date: dateBySession[c.session_id] }));
+  const summary = computeSummary(rawSessions, climbs);
+
+  if (!summary.total_sessions) {
+    return `<div class="card"><p class="empty-hint">No sessions logged yet. Start one from the Log tab — your stats will show up here.</p></div>`;
+  }
+
+  return `
+    <div class="kpi-row">
+      ${kpiTileHtml("Sessions", summary.total_sessions)}
+      ${kpiTileHtml("Climbs", summary.total_climbs)}
+      ${kpiTileHtml("Hardest Send", summary.hardest_grade || "—")}
+      ${kpiTileHtml("Send Rate", summary.send_rate != null ? summary.send_rate : "—", summary.send_rate != null ? "%" : "")}
+    </div>
+    <div class="card"><p class="eyebrow">Grade Pyramid</p>${gradePyramidHtml(computeGradePyramid(climbs))}</div>
+    <div class="card"><p class="eyebrow">Sends Over Time</p>${progressChartHtml(computeProgressOverTime(climbs))}</div>
+    <div class="card"><p class="eyebrow">Top Technique Tags</p>${tagsChartHtml(computeTopTags(climbs))}</div>
+    <div class="card"><p class="eyebrow">Strength Training Volume</p>${strengthChartHtml(computeStrengthVolume(rawExercises))}</div>
+  `;
+}
+
+async function renderStatsView() {
+  const main = $("main");
+  main.innerHTML = `<p class="empty-hint">Loading…</p>`;
+  try {
+    const [{ data: sessions, error: e1 }, { data: climbs, error: e2 }, { data: exercises, error: e3 }] = await Promise.all([
+      sb.from("sessions").select("*"),
+      sb.from("climbs").select("*"),
+      sb.from("strength_exercises").select("*"),
+    ]);
+    const error = e1 || e2 || e3;
+    if (error) throw error;
+    main.innerHTML = buildStatsHtml(sessions || [], climbs || [], exercises || []);
+  } catch (err) {
+    main.innerHTML = `<p class="empty-hint">Couldn't load stats: ${escapeHtml(err.message || String(err))}</p>`;
+  }
+}
+
 // ---- session ops ----
 async function loadTodaySession() {
   const { data: sessions, error } = await sb.from("sessions").select("*").eq("date", todayIso()).eq("active", true).limit(1);
@@ -709,8 +951,9 @@ function signOut() {
     session: null, climbs: [], exercises: [],
     draft: { grade: "V4", result: null, attempts: 1, tags: new Set(), notes: "" },
     exerciseDraft: { category: "" },
-    customTags: [], startType: "climbing",
+    customTags: [], startType: "climbing", tab: "log",
   };
+  $("tab-row").hidden = true;
   renderAuthCard();
 }
 
@@ -917,6 +1160,7 @@ async function boot() {
   render();
 }
 
+initTabs();
 boot();
 </script>
 </body>

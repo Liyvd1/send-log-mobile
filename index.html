@@ -502,6 +502,7 @@ async function handleAuth() {
     currentUser = data.user;
     await loadTodaySession();
     checkAdminStatus();
+    cleanupEmptyPastSessions();
     render();
   } catch (err) {
     renderAuthCard(err.message || "Couldn't sign in.");
@@ -605,7 +606,29 @@ function renderSessionCard() {
 }
 
 function wireSessionCard() {
-  $("finish-btn").addEventListener("click", openFinishSheet);
+  $("finish-btn").addEventListener("click", () => {
+    const isEmpty = state.climbs.length === 0 && state.exercises.length === 0;
+    if (isEmpty) {
+      if (confirm("Nothing’s been logged this session — discard it instead of saving an empty one?")) discardEmptySession();
+      return;
+    }
+    openFinishSheet();
+  });
+}
+
+async function discardEmptySession() {
+  try {
+    await sb.from("sessions").delete().eq("id", state.session.id);
+  } catch (err) {
+    showToast("Couldn’t discard session");
+  }
+  state.session = null;
+  state.climbs = [];
+  state.exercises = [];
+  state.startType = "climbing";
+  historyState.sessions = null;
+  render();
+  showToast("Empty session discarded");
 }
 
 function renderPendingBanner() {
@@ -1948,6 +1971,30 @@ async function finishSession() {
   render();
 }
 
+// A session left "active" from a previous day that was never explicitly
+// finished (tab closed, app killed, whatever) and never got anything
+// logged into it is exactly the kind of empty-session clutter the discard
+// flow above prevents going forward -- this sweeps up any that already
+// exist, or that slip through some other way. Best-effort: quietly no-ops
+// on failure rather than bothering the user with it.
+async function cleanupEmptyPastSessions() {
+  try {
+    const { data: stale } = await sb.from("sessions").select("id").eq("active", true).neq("date", todayIso());
+    if (!stale || !stale.length) return;
+    const ids = stale.map((s) => s.id);
+    const [{ data: climbRows }, { data: exRows }] = await Promise.all([
+      sb.from("climbs").select("session_id").in("session_id", ids),
+      sb.from("strength_exercises").select("session_id").in("session_id", ids),
+    ]);
+    const nonEmpty = new Set([...(climbRows || []), ...(exRows || [])].map((r) => r.session_id));
+    const emptyIds = ids.filter((id) => !nonEmpty.has(id));
+    if (emptyIds.length) {
+      await sb.from("sessions").delete().in("id", emptyIds);
+      historyState.sessions = null;
+    }
+  } catch (err) { /* best-effort */ }
+}
+
 // ---------------------------------------------------------------- boot ---
 async function boot() {
   const { data: { session } } = await sb.auth.getSession();
@@ -1960,6 +2007,7 @@ async function boot() {
   setStatus("ok", "connected");
   await loadTodaySession();
   checkAdminStatus();
+  cleanupEmptyPastSessions();
   render();
 }
 

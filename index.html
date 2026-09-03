@@ -11,6 +11,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800;900&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.113.0/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <style>
   :root {
     --bg: #e7e9e1;
@@ -214,6 +215,32 @@
   .media-stage-thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; border: 1px solid var(--border); }
   .media-stage-clear { background: none; border: none; color: var(--danger); font-size: 13px; font-weight: 600; }
 
+  .route-row { display: flex; gap: 8px; margin-bottom: 4px; }
+  .route-row input { flex: 1; min-width: 0; }
+  .route-row button { flex: 0 0 auto; padding: 11px 14px; font-size: 14px; }
+  .route-link { font-size: 12px; color: var(--ink-dim); margin-top: 2px; word-break: break-all; }
+  .route-link a { color: var(--accent); }
+
+  .qr-overlay {
+    position: fixed; inset: 0; background: #000; z-index: 400;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .qr-video { width: 100%; height: 100%; object-fit: cover; }
+  .qr-hint {
+    position: absolute; top: 22px; left: 50%; transform: translateX(-50%);
+    color: #fff; font-size: 13.5px; font-weight: 600; text-align: center; padding: 0 20px;
+    text-shadow: 0 1px 4px rgba(0,0,0,.6);
+  }
+  .qr-frame {
+    position: absolute; width: min(70vw, 260px); height: min(70vw, 260px);
+    border: 3px solid #fff; border-radius: 18px; box-shadow: 0 0 0 999px rgba(0,0,0,.35);
+  }
+  .qr-cancel {
+    position: absolute; bottom: 36px; left: 50%; transform: translateX(-50%);
+    background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.4); color: #fff;
+    border-radius: 11px; padding: 12px 26px; font-size: 14px; font-weight: 600;
+  }
+
   .log-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 4px; border-bottom: 1px solid var(--border); }
   .log-row:last-child { border-bottom: none; }
   .log-grade { font-family: "Big Shoulders Display", sans-serif; font-weight: 800; font-size: 22px; min-width: 44px; }
@@ -345,12 +372,24 @@ let state = {
   session: null,
   climbs: [],
   exercises: [],
-  draft: { grade: "V4", result: null, attempts: 1, tags: new Set(), notes: "", mediaFile: null, mediaPreviewUrl: null },
+  draft: { grade: "V4", result: null, attempts: 1, tags: new Set(), notes: "", route: "", mediaFile: null, mediaPreviewUrl: null },
   exerciseDraft: { category: "", isBodyweight: false },
   customTags: [],
   startType: "climbing",
   tab: "log",
 };
+
+// Renders a climb's route_ref as a tappable link (e.g. a gym's Griptonite
+// route page from a scanned QR code) when it looks like a URL, or as plain
+// text otherwise (a hand-typed route ID/name).
+function routeRefHtml(c) {
+  if (!c.route_ref) return "";
+  const ref = c.route_ref;
+  const isUrl = /^https?:\/\//i.test(ref);
+  return isUrl
+    ? `<div class="log-tags route-link">🔗 <a href="${escapeHtml(ref)}" target="_blank" rel="noopener">${escapeHtml(ref)}</a></div>`
+    : `<div class="log-tags route-link">🔗 ${escapeHtml(ref)}</div>`;
+}
 
 // Renders an exercise's weight as "Body weight", "Body weight + 5 kg", or
 // "5 kg" -- or null if nothing was recorded either way.
@@ -548,6 +587,7 @@ function renderClimbSection() {
             ${c.attempts > 1 ? `<span class="log-tags">${c.attempts} attempts</span>` : ""}
           </div>
           ${c.tags && c.tags.length ? `<div class="log-tags">${c.tags.map((t) => t.replace(/_/g, " ")).join(", ")}</div>` : ""}
+          ${routeRefHtml(c)}
           <div class="media-row" id="media-${c.id}">${renderMediaThumbs(c)}${c._pending ? "" : `<button class="media-add-btn" data-media-add="${c.id}" title="Add photo or video" aria-label="Add photo or video">📷+</button>`}</div>
         </div>
         <div class="log-actions">
@@ -587,6 +627,12 @@ function renderClimbSection() {
       <button type="button" class="note-toggle" id="note-toggle">+ add a note</button>
       <div class="field" id="note-field" hidden>
         <textarea id="c-notes" placeholder="Beta, crux move, etc."></textarea>
+      </div>
+
+      <p class="eyebrow">Route (optional)</p>
+      <div class="route-row">
+        <input type="text" id="c-route" value="${escapeHtml(draft.route)}" placeholder="Route ID, or scan its QR code">
+        <button type="button" class="btn btn-secondary" id="route-scan-btn">📷 Scan</button>
       </div>
 
       <p class="eyebrow">Photo / Video</p>
@@ -676,6 +722,14 @@ function wireClimbSection() {
     $("c-notes").focus();
   });
   $("c-notes")?.addEventListener("input", (e) => { state.draft.notes = e.target.value; });
+  $("c-route").addEventListener("input", (e) => { state.draft.route = e.target.value; });
+  $("route-scan-btn").addEventListener("click", () => {
+    openQrScanner((text) => {
+      state.draft.route = text;
+      $("c-route").value = text;
+      showToast("Route captured");
+    });
+  });
   $("log-climb-btn").addEventListener("click", logClimb);
   $("stage-media-btn")?.addEventListener("click", pickStagedMedia);
   $("stage-media-clear")?.addEventListener("click", clearStagedMedia);
@@ -986,7 +1040,7 @@ function signOut() {
   currentUser = null;
   state = {
     session: null, climbs: [], exercises: [],
-    draft: { grade: "V4", result: null, attempts: 1, tags: new Set(), notes: "", mediaFile: null, mediaPreviewUrl: null },
+    draft: { grade: "V4", result: null, attempts: 1, tags: new Set(), notes: "", route: "", mediaFile: null, mediaPreviewUrl: null },
     exerciseDraft: { category: "", isBodyweight: false },
     customTags: [], startType: "climbing", tab: "log",
   };
@@ -1009,10 +1063,11 @@ async function logClimb() {
     attempts: draft.attempts,
     tags: Array.from(draft.tags),
     notes: draft.notes || null,
+    route_ref: draft.route || null,
   };
   const optimistic = { id: localId, ...body, created_at: new Date().toISOString(), media: [], _pending: true };
   state.climbs.unshift(optimistic);
-  state.draft = { grade: draft.grade, result: null, attempts: 1, tags: new Set(), notes: "", mediaFile: null, mediaPreviewUrl: null };
+  state.draft = { grade: draft.grade, result: null, attempts: 1, tags: new Set(), notes: "", route: "", mediaFile: null, mediaPreviewUrl: null };
   render();
   setStatus("saving", "saving…");
   try {
@@ -1107,6 +1162,67 @@ async function retryPending() {
   const stillPending = state.climbs.some((c) => c._pending) || state.exercises.some((e) => e._pending);
   setStatus(stillPending ? "offline" : "ok", stillPending ? "will retry" : "saved");
   render();
+}
+
+// ---- QR scan (route reference) ----
+// Reads a QR code via the camera, client-side, with jsQR -- works on both
+// Android and iOS since it's plain getUserMedia + canvas, unlike NFC which
+// only Android Chrome exposes to web pages. onResult gets the decoded text
+// (typically a URL from the gym's route tag).
+function openQrScanner(onResult) {
+  const overlay = document.createElement("div");
+  overlay.className = "qr-overlay";
+  overlay.innerHTML = `
+    <p class="qr-hint">Point your camera at the route's QR code</p>
+    <video class="qr-video" autoplay playsinline muted></video>
+    <div class="qr-frame"></div>
+    <button type="button" class="qr-cancel" id="qr-cancel-btn">Cancel</button>
+  `;
+  document.body.appendChild(overlay);
+
+  const video = overlay.querySelector("video");
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  let stream = null;
+  let stopped = false;
+
+  function cleanup() {
+    if (stopped) return;
+    stopped = true;
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    overlay.remove();
+  }
+  overlay.querySelector("#qr-cancel-btn").addEventListener("click", cleanup);
+
+  function tick() {
+    if (stopped) return;
+    if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = window.jsQR(imageData.data, imageData.width, imageData.height);
+      if (code && code.data) {
+        cleanup();
+        onResult(code.data);
+        return;
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+    .then((s) => {
+      if (stopped) { s.getTracks().forEach((t) => t.stop()); return; }
+      stream = s;
+      video.srcObject = s;
+      video.play();
+      requestAnimationFrame(tick);
+    })
+    .catch((err) => {
+      cleanup();
+      showToast("Couldn’t access camera: " + (err.message || err));
+    });
 }
 
 // ---- media ops ----

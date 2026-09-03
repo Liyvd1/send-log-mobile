@@ -206,6 +206,14 @@
 
   .note-toggle { background: none; border: none; color: var(--accent); font-size: 13px; font-weight: 600; padding: 4px 0 14px; }
 
+  .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink-dim); margin: -2px 0 12px; }
+  .checkbox-row input[type="checkbox"] { width: auto; accent-color: var(--accent); }
+
+  .media-hint { font-size: 12.5px; color: var(--ink-faint); margin: -6px 0 12px; }
+  .media-stage-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .media-stage-thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; border: 1px solid var(--border); }
+  .media-stage-clear { background: none; border: none; color: var(--danger); font-size: 13px; font-weight: 600; }
+
   .log-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 4px; border-bottom: 1px solid var(--border); }
   .log-row:last-child { border-bottom: none; }
   .log-grade { font-family: "Big Shoulders Display", sans-serif; font-weight: 800; font-size: 22px; min-width: 44px; }
@@ -337,12 +345,19 @@ let state = {
   session: null,
   climbs: [],
   exercises: [],
-  draft: { grade: "V4", result: null, attempts: 1, tags: new Set(), notes: "" },
-  exerciseDraft: { category: "" },
+  draft: { grade: "V4", result: null, attempts: 1, tags: new Set(), notes: "", mediaFile: null, mediaPreviewUrl: null },
+  exerciseDraft: { category: "", isBodyweight: false },
   customTags: [],
   startType: "climbing",
   tab: "log",
 };
+
+// Renders an exercise's weight as "Body weight", "Body weight + 5 kg", or
+// "5 kg" -- or null if nothing was recorded either way.
+function weightLabel(ex) {
+  if (ex.is_bodyweight) return ex.weight_kg ? `Body weight + ${ex.weight_kg} kg` : "Body weight";
+  return ex.weight_kg ? `${ex.weight_kg} kg` : null;
+}
 
 function $(id) { return document.getElementById(id); }
 function escapeHtml(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
@@ -533,7 +548,7 @@ function renderClimbSection() {
             ${c.attempts > 1 ? `<span class="log-tags">${c.attempts} attempts</span>` : ""}
           </div>
           ${c.tags && c.tags.length ? `<div class="log-tags">${c.tags.map((t) => t.replace(/_/g, " ")).join(", ")}</div>` : ""}
-          <div class="media-row" id="media-${c.id}">${renderMediaThumbs(c)}${c._pending ? "" : `<button class="media-add-btn" data-media-add="${c.id}">+</button>`}</div>
+          <div class="media-row" id="media-${c.id}">${renderMediaThumbs(c)}${c._pending ? "" : `<button class="media-add-btn" data-media-add="${c.id}" title="Add photo or video" aria-label="Add photo or video">📷+</button>`}</div>
         </div>
         <div class="log-actions">
           <div class="log-time">${timeLabel(c.created_at)}</div>
@@ -574,12 +589,30 @@ function renderClimbSection() {
         <textarea id="c-notes" placeholder="Beta, crux move, etc."></textarea>
       </div>
 
+      <p class="eyebrow">Photo / Video</p>
+      <p class="media-hint">Attach a picture or video of this send or attempt — optional, and you can also add one afterwards from the list below.</p>
+      ${draft.mediaFile ? renderStagedMediaHtml(draft) : `<div class="field" style="margin-bottom:12px;"><button type="button" class="btn btn-secondary" id="stage-media-btn">📷 Add Photo / Video</button></div>`}
+
       <button class="btn btn-primary" id="log-climb-btn">Log Climb</button>
     </div>
 
     <div class="card">
       <p class="eyebrow">Climbs this session</p>
       ${rows}
+    </div>
+  `;
+}
+
+function renderStagedMediaHtml(draft) {
+  const isVideo = draft.mediaFile.type.startsWith("video/");
+  const thumb = isVideo
+    ? `<div class="media-video-badge">🎥</div>`
+    : `<img class="media-stage-thumb" src="${draft.mediaPreviewUrl || ""}">`;
+  return `
+    <div class="media-stage-row">
+      ${thumb}
+      <span class="log-tags" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(draft.mediaFile.name)}</span>
+      <button type="button" class="media-stage-clear" id="stage-media-clear">Remove</button>
     </div>
   `;
 }
@@ -644,6 +677,8 @@ function wireClimbSection() {
   });
   $("c-notes")?.addEventListener("input", (e) => { state.draft.notes = e.target.value; });
   $("log-climb-btn").addEventListener("click", logClimb);
+  $("stage-media-btn")?.addEventListener("click", pickStagedMedia);
+  $("stage-media-clear")?.addEventListener("click", clearStagedMedia);
   document.querySelectorAll("[data-del]").forEach((btn) => btn.addEventListener("click", () => deleteClimb(btn.dataset.del)));
   document.querySelectorAll("[data-media-add]").forEach((btn) => btn.addEventListener("click", () => pickAndUploadMedia(btn.dataset.mediaAdd)));
 }
@@ -658,7 +693,7 @@ function renderExerciseSection() {
 
   const rows = state.exercises.length
     ? state.exercises.map((ex) => {
-        const meta = [ex.sets ? `${ex.sets} sets` : null, ex.reps ? `${ex.reps} reps` : null, ex.weight_kg ? `${ex.weight_kg} kg` : null].filter(Boolean);
+        const meta = [ex.sets ? `${ex.sets} sets` : null, ex.reps ? `${ex.reps} reps` : null, weightLabel(ex)].filter(Boolean);
         return `
       <div class="log-row" data-id="${ex.id}">
         <div class="log-main">
@@ -692,8 +727,9 @@ function renderExerciseSection() {
       <div class="field-row">
         <input type="number" min="0" id="e-sets" placeholder="Sets">
         <input type="number" min="0" id="e-reps" placeholder="Reps">
-        <input type="number" min="0" step="0.5" id="e-weight" placeholder="kg">
+        <input type="number" min="0" step="0.5" id="e-weight" placeholder="+kg (optional)">
       </div>
+      <label class="checkbox-row"><input type="checkbox" id="e-bodyweight" ${draft.isBodyweight ? "checked" : ""}> Body weight only (no added load)</label>
 
       <div class="field"><textarea id="e-notes" placeholder="Notes (optional)"></textarea></div>
 
@@ -714,6 +750,7 @@ function wireExerciseSection() {
       $("category-group").querySelectorAll(".chip").forEach((c) => c.classList.toggle("selected", c === chip));
     })
   );
+  $("e-bodyweight").addEventListener("change", (e) => { state.exerciseDraft.isBodyweight = e.target.checked; });
   $("log-exercise-btn").addEventListener("click", logExercise);
   document.querySelectorAll("[data-del-ex]").forEach((btn) => btn.addEventListener("click", () => deleteExercise(btn.dataset.delEx)));
 }
@@ -949,8 +986,8 @@ function signOut() {
   currentUser = null;
   state = {
     session: null, climbs: [], exercises: [],
-    draft: { grade: "V4", result: null, attempts: 1, tags: new Set(), notes: "" },
-    exerciseDraft: { category: "" },
+    draft: { grade: "V4", result: null, attempts: 1, tags: new Set(), notes: "", mediaFile: null, mediaPreviewUrl: null },
+    exerciseDraft: { category: "", isBodyweight: false },
     customTags: [], startType: "climbing", tab: "log",
   };
   $("tab-row").hidden = true;
@@ -961,6 +998,8 @@ function signOut() {
 async function logClimb() {
   const draft = state.draft;
   if (!draft.result) { showToast("Pick flash / send / attempt"); return; }
+  const stagedFile = draft.mediaFile;
+  if (draft.mediaPreviewUrl) URL.revokeObjectURL(draft.mediaPreviewUrl);
   const localId = "local-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
   const body = {
     session_id: state.session.id,
@@ -973,7 +1012,7 @@ async function logClimb() {
   };
   const optimistic = { id: localId, ...body, created_at: new Date().toISOString(), media: [], _pending: true };
   state.climbs.unshift(optimistic);
-  state.draft = { grade: draft.grade, result: null, attempts: 1, tags: new Set(), notes: "" };
+  state.draft = { grade: draft.grade, result: null, attempts: 1, tags: new Set(), notes: "", mediaFile: null, mediaPreviewUrl: null };
   render();
   setStatus("saving", "saving…");
   try {
@@ -983,9 +1022,10 @@ async function logClimb() {
     if (item) { Object.assign(item, data); item._pending = false; item.media = []; }
     setStatus("ok", "saved");
     render();
+    if (stagedFile) await uploadMedia(data.id, stagedFile);
   } catch (err) {
     setStatus("offline", "will retry");
-    showToast("Couldn’t save — tap Retry when back online");
+    showToast(stagedFile ? "Couldn’t save — tap Retry when back online, then add the photo/video" : "Couldn’t save — tap Retry when back online");
   }
 }
 
@@ -1011,11 +1051,12 @@ async function logExercise() {
     sets: numOrNull($("e-sets").value),
     reps: numOrNull($("e-reps").value),
     weight_kg: numOrNull($("e-weight").value, true),
+    is_bodyweight: state.exerciseDraft.isBodyweight,
     notes: $("e-notes").value.trim() || null,
   };
   const optimistic = { id: localId, ...body, created_at: new Date().toISOString(), _pending: true };
   state.exercises.unshift(optimistic);
-  state.exerciseDraft = { category };
+  state.exerciseDraft = { category, isBodyweight: false };
   render();
   setStatus("saving", "saving…");
   try {
@@ -1069,6 +1110,29 @@ async function retryPending() {
 }
 
 // ---- media ops ----
+function pickStagedMedia() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*,video/*";
+  input.capture = "environment";
+  input.onchange = () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    if (state.draft.mediaPreviewUrl) URL.revokeObjectURL(state.draft.mediaPreviewUrl);
+    state.draft.mediaFile = file;
+    state.draft.mediaPreviewUrl = file.type.startsWith("video/") ? null : URL.createObjectURL(file);
+    render();
+  };
+  input.click();
+}
+
+function clearStagedMedia() {
+  if (state.draft.mediaPreviewUrl) URL.revokeObjectURL(state.draft.mediaPreviewUrl);
+  state.draft.mediaFile = null;
+  state.draft.mediaPreviewUrl = null;
+  render();
+}
+
 function pickAndUploadMedia(climbId) {
   const input = document.createElement("input");
   input.type = "file";
